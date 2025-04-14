@@ -1,0 +1,15 @@
+/.idea/
+/wastebin/
+/s4/
+/tft/
+/neuralforecast/
+/data/
+/logs/
+/plots/
+/quant/
+/temp/
+/__pycache__/
+/.python-version
+/nse.py
+/results/
+/tft.py
