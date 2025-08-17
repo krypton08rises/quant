@@ -1,3 +1,4 @@
+/.env
 /.idea/
 /wastebin/
 /s4/
@@ -13,3 +14,4 @@
 /nse.py
 /results/
 /tft.py
+

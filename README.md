@@ -159,8 +159,3 @@ Final Recommendations
 
     Documentation:
     Keep detailed records of every experiment. Document not just the outcomes, but also the reasoning behind each experiment’s design. This will help guide future improvements and troubleshooting.
-
-By following this roadmap, you’ll have a structured approach to enhancing your forecasting pipeline, automating experiments, and ultimately deploying a well-informed trading system.
-
-Feel free to modify this README as your project evolves. Happy experimenting!
-
