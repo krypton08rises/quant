@@ -10,5 +10,8 @@ scikit-learn
 #pickle
 seaborn
 tqdm
-
-
+fastapi
+uvicorn
+flask
+kiteconnect 
+ngrok 
