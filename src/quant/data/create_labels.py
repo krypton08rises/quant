@@ -36,8 +36,8 @@ class StreamConfig:
     folder_path: Path = Path("data/historical/")
     file_glob: str = "*day.pkl"
     label_col: str = "percent_change"     # unscaled, per your comment  
-    label_unit: str = "pct"               # "pct" -> ±2 means ±2 percentage points; "fraction" -> thresholds will be scaled by 100
-    up_thresh: float = 5.0                # > +2 => class 2 
+    l_unit: str = "pct"               # "pct" -> ±2 means ±2 percentage points; "fraction" -> thresholds will be scaled by 100
+  X[sdf.index.min():sdf.index.maxX[sdf.index.min():sdf.index.maxhresh: float = 5.0                # > +2 => class 2 
     down_thresh: float = -5.0             # < -2 => class 1
     window_len: int = 30                  # L
     horizon: int = 1                      # k steps ahead label is computed at t+horizon using info up to t
@@ -47,7 +47,7 @@ class StreamConfig:
         "close", 
         "volume",
         "tick_body", 
-        "upper_shadow", 
+       X[sdf.index.min():sdf.index.maxX[sdf.index.min():sdf.index.max
         "lower_shadow", 
         "diff"
     )
