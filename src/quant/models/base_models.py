@@ -169,4 +169,16 @@ def main():
     print(f"Plots saved under {base_output}/<model_name>/{timestamp}/")
 
 if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description="Evaluate baseline forecasting models on historical data.")
+    parser.add_argument('--index', type=str, default='nifty_50', help="Index to evaluate (default: 'nifty_50')")
+    parser.add_argument('--cutoff_date', type=str, default='2025-05-01', help="Cutoff date for training data (default: '2025-01-01')")
+    parser.add_argument('--interval', type=str, default='day', help="Data interval (default: 'day')")
+    parser.add_argument('--target', type=str, default='close', help="Target column for predictions (default: 'close')")
+    args = parser.parse_args()
+    INDEX = args.index
+    SPLIT_DATE = args.cutoff_date
+    INTERVAL = args.interval
+    TARGET = args.target
+    logging.info(f"Evaluating {INDEX} with {INTERVAL} interval, split at {SPLIT_DATE}...")
     main()

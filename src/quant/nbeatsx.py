@@ -22,27 +22,7 @@ from utils.logging import setup_logger
 logger = setup_logger(__name__, log_subdir="nbeatsx", include_console=True)
 logger.info("NBEATSx script initialized")
 
-# # Configure logging to file and console
-# os.makedirs("logs", exist_ok=True)
-# ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-# log_file = f"logs/nbeatsx/{ts}.log"
-# logging.basicConfig(
-#     filename=log_file,
-#     filemode="a",
-#     format="%(asctime)s %(levelname)s: %(message)s",
-#     level=logging.INFO
-# )
-# logger = logging.getLogger(__name__)
-# # Console handler
-# console_handler = logging.StreamHandler()
-# console_handler.setLevel(logging.INFO)
-# console_formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
-# console_handler.setFormatter(console_formatter)
-# logger.addHandler(console_handler)
-# logger.info("NBEATSx script initialized")
-
-# torch.set_float32_matmul_precision('medium' | 'high')
-
+ 
 def shift_weekend_predictions(df: pd.DataFrame, date_col='ds') -> pd.DataFrame:
     """
     Shift any weekend dates to the next business day.
