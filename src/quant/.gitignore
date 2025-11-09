@@ -1,4 +1,6 @@
-data/
+data/historical/
+data/indices/
+data/wastebin/
 access_token.json
 neuralforecast/
 logs/
