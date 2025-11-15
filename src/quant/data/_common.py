@@ -1,5 +1,7 @@
 from enum import Enum
 
+EMBARGOED_DATE_START = '2025-01-01'
+
 
 # Lookback days for each interval   
 INTERVAL_LOOKBACK = {

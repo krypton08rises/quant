@@ -275,3 +275,14 @@ class GoldConfig(BaseModel):
     down_thresh: float = -2.0
     label_unit: str = "pct"  # "pct" points (e.g., 2.0) or "fraction"
     horizons: Tuple[int, ...] = (1,)
+
+
+    def _compute_label_from_pct(x: float, down: float, up: float) -> int:
+        """
+        Compute the label for a given percent change value.
+        """
+        if x < down:
+            return 1
+        if x > up:
+            return 2
+        return 0
