@@ -1,10 +1,10 @@
-import json
 import torch
 
 from pathlib import Path
 from datetime import datetime
 from pydantic import BaseModel 
 
+from ._common import HIDDEN_LAYERS
 
 class SeqClassDataConfig(BaseModel):
     """
@@ -31,6 +31,7 @@ class SeqClassDataConfig(BaseModel):
     h4: int = 16
     num_classes: int = 3
     dropout:float = 0.3
+    MLP_HIDDEN: tuple[int, ...] = HIDDEN_LAYERS
 
     # DataLoader parameters
     batch_size: int = 512
