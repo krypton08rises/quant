@@ -1,3 +1,4 @@
+data/__pycache__/
 data/historical/
 data/indices/
 data/wastebin/
@@ -11,4 +12,4 @@ logs/
 plots/
 results/
 artifacts/
-
+models/__pycache__/
