@@ -2,6 +2,7 @@ data/__pycache__/
 data/historical/
 data/indices/
 data/wastebin/
+models/wastebin/
 access_token.json
 neuralforecast/
 logs/
