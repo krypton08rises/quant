@@ -13,64 +13,29 @@ python train_torch_tabular.py \
   --batch-size 512 --epochs 50 --lr 3e-4 --use-emb
 """
 from __future__ import annotations
-import argparse
 from pathlib import Path
 import random
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+
 from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import classification_report, f1_score
-
+from ..data.utils import read_gold
+from ..data.models import GoldConfig
+from .config import SeqClassDataConfig
 # -------------------------
 # Repro
 # -------------------------
 
-def set_seed(seed: int = 42):
+def set_seed(seed: int = 13):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-
-
-# -------------------------
-# Data
-# -------------------------
-
-EXCLUDE_COLS = {
-    "date", "fwd_pct_h1", "label_h1",  # time/targets
-}
-# You can add anything else you want to exclude explicitly (e.g., raw open/high/low if present)
-
-
-def read_gold(gold_dir: Path) -> pd.DataFrame:
-    """
-    Read GOLD parquet files from the specified directory.
-    Arguments
-    ---------
-    gold_dir: Path
-        The path to the GOLD directory containing parquet files.
-    Returns
-    -------
-    pd.DataFrame
-        The concatenated DataFrame containing all GOLD data.
-    """
-    parts = sorted(Path(gold_dir).glob("*.parquet"))
-    if not parts:
-        raise FileNotFoundError(f"No parquet files found in {gold_dir}")
-    df = pd.concat([pd.read_parquet(p) for p in parts], ignore_index=True)
-    
-    # normalize timezones: make naive datetime
-    df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce").dt.tz_convert(None)
-
-    # if utc convert fails because it's already tz-naive with offset string, try tz_localize(None)
-    if df["date"].isna().any():
-        df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
-    df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
-    return df
 
 
 def make_splits(df: pd.DataFrame, val_start: str, test_start: str):
@@ -96,29 +61,6 @@ def make_splits(df: pd.DataFrame, val_start: str, test_start: str):
     test = df[df["date"] >= test_start].copy()
     return train, val, test
 
-
-def build_feature_space(df: pd.DataFrame):
-    """
-    Build the feature space for the model.
-    Arguments
-    ---------
-    df: pd.DataFrame
-        The input DataFrame containing the data.
-    Returns
-    -------
-    Tuple[str, str, list[str]]
-        The target column, symbol column, and list of numeric feature columns.
-    """
-    # Identify target and features
-    target_col = "label_h1"
-    # symbol handling: keep separate so we can embedding it
-    sym_col = "symbol"
-    # numeric features = all float-like columns except excludes and target
-    numeric_cols = [
-        c for c in df.columns 
-        if c not in EXCLUDE_COLS | {target_col, sym_col} and pd.api.types.is_numeric_dtype(df[c])
-    ]
-    return target_col, sym_col, numeric_cols
 
 
 class TabularDS(Dataset):
@@ -315,13 +257,9 @@ def train_loop(model, train_loader, val_loader, device, class_weights, epochs=50
     return model
 
 
-# -------------------------
-# Main
-# -------------------------
-
-def handler(args):
+def handler(dataconfig: SeqClassDataConfig, gc: GoldConfig):
     """
-    Main function to run the training and evaluation.
+    Handler function to run the training and evaluation.
     Arguments
     ---------
     args: argparse.Namespace
@@ -330,10 +268,10 @@ def handler(args):
     -------
     None
     """
-    set_seed(args.seed)
-    device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
+    set_seed(dataconfig.seed)
+    device = torch.device("cuda" if torch.cuda.is_available() and not dataconfig.cpu else "cpu")
 
-    df = read_gold(Path(args.gold_dir))
+    df = read_gold(Path(dataconfig.gold_dir))
     # Pick the label column based on horizon inferred from directory name if needed.
     # Here we assume h=1 gold folder -> label_h1 present.
 
@@ -342,7 +280,7 @@ def handler(args):
     target_col, sym_col, numeric_cols = build_feature_space(df)
 
     # Time-based split
-    train_df, val_df, test_df = make_splits(df, args.val_start, args.test_start)
+    train_df, val_df, test_df = make_splits(df, dataconfig.val_start_dt, dataconfig.test_start_dt)
 
     # Build symbol vocab (from TRAIN ONLY to avoid leakage of identities — optional choice)
     if args.use_emb:
@@ -410,21 +348,6 @@ def handler(args):
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser()
-    p.add_argument("--gold-dir", default="data/historical/index/gold/NSE/day/1/1/", help="Path to GOLD labels parquet dir (e.g., .../h=1/labels_v1)")
-    p.add_argument("--val-start", default='2024-12-01')
-    p.add_argument("--test-start", default='2025-01-01')
-    p.add_argument("--batch-size", type=int, default=512)
-    p.add_argument("--epochs", type=int, default=50)
-    p.add_argument("--lr", type=float, default=3e-4)
-    p.add_argument("--cpu", action="store_true")
-    p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--use-emb", dest="use_emb", action="store_true")
-    p.add_argument("--emb-dim", type=int, default=16)
-    p.add_argument("--h1", type=int, default=256)
-    p.add_argument("--h2", type=int, default=128)
-    p.add_argument("--h3", type=int, default=64)
-    p.add_argument("--dropout", type=float, default=0.1)
-    p.add_argument("--out-dir", default="artifacts/tabular_h1")
-    args = p.parse_args()
-    handler(args)
+    gc = GoldConfig()
+    dataconfig = SeqClassDataConfig()
+    handler(dataconfig, gc)

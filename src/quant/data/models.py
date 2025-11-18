@@ -269,14 +269,15 @@ class GoldConfig(BaseModel):
     """
     exchange: str = "NSE"
     interval: str = "1d"
-    base_dir: Path = Path("data")
-    labels_version: str = "v1"
+    base_dir: Path = Path("data/historical/")
+    feature_version: str = "v1"
+    label_version: str = "1"
     up_thresh: float = 2.0
     down_thresh: float = -2.0
     label_unit: str = "pct"  # "pct" points (e.g., 2.0) or "fraction"
-    horizons: Tuple[int, ...] = (1,)
+    horizons: Tuple[int, ...] = (1,4)
 
-
+    @staticmethod
     def _compute_label_from_pct(x: float, down: float, up: float) -> int:
         """
         Compute the label for a given percent change value.
