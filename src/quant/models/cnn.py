@@ -72,44 +72,24 @@ class TabularDS(Dataset):
         else:
             return x_num, y
 
-
-# -------------------------
-# Model
-# -------------------------
-
-class MLP(nn.Module):
+class CNN(nn.Module):
     """
-    Multi-layer perceptron (MLP) model.
+    Convolutional Neural Network (CNN) model for tabular data.
     """
-    def __init__(self, in_dim: int, n_classes: int = 3, hidden: tuple[int, ...] = HIDDEN_LAYERS, pdrop: float = 0.1):
+    def __init__(self, in_channels: int, n_classes: int = 3, hidden: tuple[int, ...] = HIDDEN_LAYERS, pdrop: float = 0.1):
         super().__init__()
         layers = []
-        last = in_dim
+        last = in_channels
         for h in hidden:
-            layers += [nn.Linear(last, h), nn.ReLU(), nn.Dropout(pdrop)]
+            layers += [nn.Conv1d(last, h, kernel_size=3, padding=1), nn.ReLU(), nn.Dropout(pdrop)]
             last = h
-        layers += [nn.Linear(last, n_classes)]
+        layers += [nn.AdaptiveAvgPool1d(1), nn.Flatten(), nn.Linear(last, n_classes)]
         self.net = nn.Sequential(*layers)
 
     def forward(self, x):
+        # x shape: (batch_size, in_channels, seq_length)
         return self.net(x)
-
-
-class MLPWithSymbol(nn.Module):
-    """
-    Multi-layer perceptron (MLP) model with symbol embeddings.
-    """
-    def __init__(self, in_dim: int, n_symbols: int, emb_dim: int = 16, n_classes: int = 3,
-                 hidden: tuple[int, ...] = (256, 128, 64), pdrop: float = 0.1):
-        super().__init__()
-        self.emb = nn.Embedding(num_embeddings=n_symbols, embedding_dim=emb_dim)
-        self.mlp = MLP(in_dim + emb_dim, n_classes=n_classes, hidden=hidden, pdrop=pdrop)
-
-    def forward(self, x_num, sym_id):
-        e = self.emb(sym_id)
-        z = torch.cat([x_num, e], dim=1)
-        return self.mlp(z)
-
+    
 
 # -------------------------
 # Training utils
