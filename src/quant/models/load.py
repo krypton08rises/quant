@@ -14,7 +14,7 @@ from ._common import EXCLUDE_COLS, TARGET_COL, NUM_COLS
 
 from ._common import GOLD_DIR
 from .config import SeqClassDataConfig
-
+from ..logs.logging import logger
 # make class 
 
 class SeqClassificationDataset(IterableDataset):
@@ -74,30 +74,117 @@ class SeqClassificationDataset(IterableDataset):
                 df = df[df['date'] >= self.train_cutoff_dt]
             else:
                 df = df[df['date'] < self.train_cutoff_dt].reset_index(drop=True)
-            # Randomly pick a starting point for sequence
+            """
+            Sample generation logic:
+            - keep track of labels, ensure balanced classes if needed
+            - identify a label that hasn't been used enough yet
+            - randomly sample start indices for sequences with that label at the end
+            - yield sequences of length self.input_length   
+            """
+
+            
             max_start_idx = len(df) - self.input_length
             if max_start_idx <= 0:
                 continue  # Skip if not enough data
-            start_idx = random.randint(0, max_start_idx)
-            end_idx = start_idx + self.input_length
 
-            sym_id = self.sym2id[filename.split("_")[0]]
+            # Precompute all candidate windows per label
+            indices_by_label: dict[int, list[int]] = {}
+
+            for start_idx in range(0, max_start_idx + 1):
+                end_idx = start_idx + self.input_length
+                if end_idx > len(df):
+                    break
+                label_val = int(df[self.target_col].iloc[end_idx - 1])
+                if label_val not in indices_by_label:
+                    indices_by_label[label_val] = []
+                indices_by_label[label_val].append(start_idx)
+
+            # symbol id once per stock
             symbol = filename.split("_")[0]
-            self.training_artifacts.append([symbol, df['date'].iloc[start_idx], df['date'].iloc[end_idx - 1]])
+            sym_id_val = self.sym2id[symbol]
 
-            yield {
-                'features': torch.from_numpy(
-                    df[NUM_COLS].iloc[start_idx:end_idx].to_numpy().astype('float32')
-                ),
-                'symbol': torch.tensor(sym_id, dtype=torch.float16),
-                'target': df[self.target_col].iloc[end_idx - 1]
-            }
-            
+            # Precompute feature matrix once per stock: (T, num_features)
+            feat_np = df[NUM_COLS].to_numpy(dtype="float32")
+
+            # Try to do balanced sampling across labels 0,1,2
+            labels_present = set(indices_by_label.keys())
+            balanced_labels = {0, 1, 2}
+
+            if self.train and balanced_labels.issubset(labels_present):
+                # We have 0,1,2 for this stock -> can balance
+                # Shuffle and trim each label list to same length
+                min_count = min(len(indices_by_label[l]) for l in balanced_labels)
+
+                for l in balanced_labels:
+                    rnd.shuffle(indices_by_label[l])
+                    indices_by_label[l] = indices_by_label[l][:min_count]
+
+                # Interleave 0,1,2,0,1,2,...
+                for i in range(min_count):
+                    for l in (0, 1, 2):
+                        start_idx = indices_by_label[l][i]
+                        end_idx = start_idx + self.input_length
+
+                        window = feat_np[start_idx:end_idx]  # (seq_len, num_features)
+                        x_num = torch.from_numpy(window)     # float32
+                        sym_tensor = torch.tensor(sym_id_val, dtype=torch.long)
+                        y_tensor = torch.tensor(l, dtype=torch.long)
+
+                        self.training_artifacts.append(
+                            [
+                                symbol,
+                                df["date"].iloc[start_idx],
+                                df["date"].iloc[end_idx - 1],
+                                l,
+                            ]
+                        )
+
+                        yield {
+                            "features": x_num,
+                            "symbol": sym_tensor,
+                            "target": y_tensor,
+                        }
+
+            else:
+                # Fallback: unbalanced but still randomized windows
+                candidate_indices = list(range(0, max_start_idx + 1))
+                rnd.shuffle(candidate_indices)
+
+                for start_idx in candidate_indices:
+                    end_idx = start_idx + self.input_length
+                    if end_idx > len(df):
+                        continue
+
+                    label_val = int(df[self.target_col].iloc[end_idx - 1])
+
+                    window = feat_np[start_idx:end_idx]
+                    x_num = torch.from_numpy(window)
+                    sym_tensor = torch.tensor(sym_id_val, dtype=torch.long)
+                    y_tensor = torch.tensor(label_val, dtype=torch.long)
+
+                    self.training_artifacts.append(
+                        [
+                            symbol,
+                            df["date"].iloc[start_idx],
+                            df["date"].iloc[end_idx - 1],
+                            label_val,
+                        ]
+                    )
+
+                    yield {
+                        "features": x_num,
+                        "symbol": sym_tensor,
+                        "target": y_tensor,
+                    }
 
     def __end__(self):
         pd.DataFrame(
-            self.training_artifacts, columns=["symbol", "start_date", "end_date"]).to_csv("training_artifacts.csv", index=False
+            self.training_artifacts, columns=["symbol", "start_date", "end_date", "label"]).to_csv("training_artifacts.csv", index=False
             )   
+        logging.info("Saved training artifacts to training_artifacts.csv")   
+        
+
+
 
     def build_feature_space(df: pd.DataFrame):
         """

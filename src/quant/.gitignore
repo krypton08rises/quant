@@ -6,11 +6,9 @@ data/wastebin/
 models/wastebin/
 access_token.json
 neuralforecast/
-logs/
 lightning_logs/
 apis/
 baseline_results/
-logs/
 plots/
 results/
 artifacts/

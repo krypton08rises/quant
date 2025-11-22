@@ -34,7 +34,7 @@ class SeqClassDataConfig(BaseModel):
     emb_dim: int = 32
 
     # DataLoader parameters
-    batch_size: int = 512
+    batch_size: int = 32
     shuffle: bool = True
     num_workers: int = 4
     pin_memory: bool = True

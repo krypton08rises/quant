@@ -24,11 +24,13 @@ import torch.nn.functional as F
 
 from torch.utils.data import DataLoader
 from sklearn.metrics import classification_report, f1_score
-from quant.data.utils import read_gold
-from quant.data.models import GoldConfig
-from quant.models.config import SeqClassDataConfig
-from quant.models._common import HIDDEN_LAYERS
-from quant.models.load import SeqClassificationDataset
+from ..data.utils import read_gold
+from ..data.models import GoldConfig
+from .config import SeqClassDataConfig
+from ._common import HIDDEN_LAYERS
+from .load import SeqClassificationDataset
+from ..logs.logging import logger
+
 # -------------------------
 # Repro
 # -------------------------
@@ -71,6 +73,7 @@ class CNN(nn.Module):
 
         self.use_emb = emb_dim > 0 and num_symbols > 0 
         if self.use_emb:
+            logger.info(f"Using symbol embedding: num_symbols={num_symbols}, emb_dim={emb_dim}")
             self.symbol_emb = nn.Embedding(num_symbols, emb_dim) # (num_symbols, emb_dim)
             mlp_input_dim = 256 + emb_dim
         else:
@@ -86,13 +89,16 @@ class CNN(nn.Module):
         mlp_layers.append(nn.Linear(prev_dim, num_classes))
         self.mlp = nn.Sequential(*mlp_layers)
 
-    def forward(self, x_num: torch.Tensor, sym_id: torch.Tensor | None = None):
+    def forward(self,    x_num: torch.Tensor, sym_id: torch.Tensor | None = None):
+        """         
         # x_num: (B, seq_len, num_features)
-        x_num = x_num.permute(0, 2, 1)  # -> (B, num_features, seq_len)
-        features = self.cnn(x_num)      # (B, 256)
+        """
 
-        if self.use_emb and sym_id is not None:
-            # ensure sym_id is long: sym_id.dtype == torch.long
+        x_num = x_num.permute(0, 2, 1)  # -> (B, num_features, seq_len)
+
+        features = self.cnn(x_num)      # (B, 256)
+        
+        if self.use_emb:
             sym_emb = self.symbol_emb(sym_id)
             features = torch.cat([features, sym_emb], dim=1)
 
@@ -129,18 +135,16 @@ def evaluate(
             sym_id = batch['symbol'].to(device, non_blocking=True)
             # labels can stay on cpu, but if they are on gpu, move back:
             y = batch['target'].long().to("cpu")
-            print("Batch shapes:", x_num.shape, sym_id.shape, y.shape)
             logits = model(x_num, sym_id)          # (B, num_classes)
             prob = torch.softmax(logits, dim=1)    # (B, num_classes)
 
             ps.append(prob.cpu().numpy())
             ys.append(y.cpu().numpy())
-    print("Evaluation complete. Shapes: ", [p.shape for p in ps], [y.shape for y in ys])
     y_true = np.concatenate(ys, axis=0)   # (N,)
     y_prob = np.concatenate(ps, axis=0)   # (N, C)
     y_pred = y_prob.argmax(axis=1)        # (N,)
 
-    print(f"Classification Report:{classification_report(y_true, y_pred)}")
+    logger.info(f"Classification Report:{classification_report(y_true, y_pred)}")
 
     macro_f1 = f1_score(y_true, y_pred, average="macro")
     return macro_f1, y_true, y_pred
@@ -175,7 +179,7 @@ def train_loop(
             optimizer.step()
 
         val_f1, _, _ = evaluate(model, val_loader)
-        print(f"Epoch {ep:03d} | val macro-F1: {val_f1:.4f}")
+        logger.info(f"Epoch {ep:03d} | val macro-F1: {val_f1:.4f}")
         if val_f1 > best_f1:
             best_f1 = val_f1
             best_state = {k: v.cpu() for k, v in model.state_dict().items()}
@@ -213,7 +217,7 @@ def handler(dataconfig: SeqClassDataConfig, gc: GoldConfig):
         kernel_size=dataconfig.kernel_size,
         mlp_hidden=dataconfig.MLP_HIDDEN,
         emb_dim=dataconfig.emb_dim ,
-        num_symbols=len(dataconfig.sym2id),
+        num_symbols=len(train_dataset.sym2id),
     )
     opt = torch.optim.AdamW(model.parameters(), lr=dataconfig.lr, weight_decay=dataconfig.wd)
 
