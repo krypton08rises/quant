@@ -1,10 +1,8 @@
+"""Depracated: Use src/quant/data/kite_data.py instead; cron handler could be useful"""
 import os
-import ipdb
 import dill
 import logging
 import datetime 
-
-
 
 from datetime import date, timedelta
 from typing import List, Optional

@@ -1,10 +1,9 @@
-import torch
-
 from pathlib import Path
 from datetime import datetime
 from pydantic import BaseModel 
+from ..data._common import Interval
 
-from ._common import HIDDEN_LAYERS
+from ._common import HIDDEN_LAYERS, NUM_COLS
 
 class SeqClassDataConfig(BaseModel):
     """
@@ -15,23 +14,24 @@ class SeqClassDataConfig(BaseModel):
     seed: int = 13
 
     # File paths 
-    gold_dir = Path("data/historical/gold")
-    artifacts: Path = Path("models/data/cnn/")
+    gold_dir:Path = Path("src/quant/data/historical/gold")
+    artifacts: Path = Path("src/quant/models/data/cnn/")
 
     # Test set parameters
-    val_start_dt = datetime(2024, 1, 1)
-    test_start_dt = datetime(2024, 6, 1)
+    val_start_dt: datetime = datetime(2024, 1, 1)
+    test_start_dt: datetime = datetime(2024, 6, 1)  
+
+    # Dataset parameters
+    numeric_cols: list[str] = NUM_COLS
+    interval: Interval = Interval.DAY
 
     # Model Parameters
     max_seq_length: int = 32 # Maximum length of days seen by the model
-    embed_dim: int = 16
-    h1: int = 256
-    h2: int = 128
-    h3: int = 64
-    h4: int = 16
+    kernel_size: int = 5
     num_classes: int = 3
     dropout:float = 0.3
     MLP_HIDDEN: tuple[int, ...] = HIDDEN_LAYERS
+    emb_dim: int = 32
 
     # DataLoader parameters
     batch_size: int = 512
@@ -39,9 +39,11 @@ class SeqClassDataConfig(BaseModel):
     num_workers: int = 4
     pin_memory: bool = True
 
+    sym2id: dict[str, int] = {}
+
     # Training Parameters
-    num_epochs: int = 2
+    num_epochs: int = 20
     lr: float = 5e-5
     wd: float = 0.01
-    device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
