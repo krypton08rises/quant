@@ -94,7 +94,7 @@ class SeqClassificationDataset(IterableDataset):
                 end_idx = start_idx + self.input_length
                 if end_idx > len(df):
                     break
-                label_val = int(df[self.target_col].iloc[end_idx - 1])
+                label_val = int(df[self.target_col].iloc[end_idx])
                 if label_val not in indices_by_label:
                     indices_by_label[label_val] = []
                 indices_by_label[label_val].append(start_idx)
