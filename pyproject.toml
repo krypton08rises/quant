@@ -1,34 +1,13 @@
 [build-system]
-requires = ["hatchling>=1.25", "hatch-vsc>=.4"]
-build-backend = "hatchling.build"
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "quant_fly"
 version = "0.0.1"
-description = "Quantitative Trading - Kite"
-readme = "README.md"
-requires-python = ">=3.11"
-license = { text = "MIT" }
-authors = [{ name = "Kush", email = "kushagra.raina@gmail.com" }]
-dependencies = [
-  "numpy>=1.26",
-  "pandas>=2.2.3",
-  "torch>=2.5.0", 
-]
-keywords = ["utilities"]
-classifiers = [
-  "Programming Language :: Python ::3",
-  "License :: OSI Approved :: MIT License",
-  "Operating System :: OS Independent",
-]
+requires-python = ">=3.10"
+dependencies = []
 
-[project.urls]
-Homepage = "https://github.com/krypton08rises/quant"
-Issues   = "https://github.com/krypton08rises/quant/issues"
-
-[project.optional-dependencies]
-dev = ["neural-forecast","pytest>=8", "ruff>=0.6", "mypy>=1.10"]
-
-# Optional: add a CLI entry point
-#[project.scripts]
-#mycli = "mypkg_name.core:main"
+[project.readme]
+file = "README.md"
+content-type = "text/markdown"

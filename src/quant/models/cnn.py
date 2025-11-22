@@ -19,13 +19,16 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
 
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from sklearn.metrics import classification_report, f1_score
-from ..data.utils import read_gold
-from ..data.models import GoldConfig
-from .config import SeqClassDataConfig
-from ._common import HIDDEN_LAYERS
+from quant.data.utils import read_gold
+from quant.data.models import GoldConfig
+from quant.models.config import SeqClassDataConfig
+from quant.models._common import HIDDEN_LAYERS
+from quant.models.load import SeqClassificationDataset
 # -------------------------
 # Repro
 # -------------------------
@@ -39,180 +42,139 @@ def set_seed(seed: int = 13):
     torch.backends.cudnn.benchmark = False
 
 
-class TabularDS(Dataset):
-    """
-    Tabular dataset for training and evaluation.
-    """
-    def __init__(self, df: pd.DataFrame, numeric_cols: list[str], target_col: str, sym2id: dict[str, int] | None = None):
-        self.df = df.reset_index(drop=True)
-        self.numeric_cols = numeric_cols
-        self.target_col = target_col
-        self.sym2id = sym2id
-        # standardize numeric on-the-fly using train stats you pass in later
-        self.mean = None
-        self.std = None
-
-    def set_norm(self, mean: np.ndarray, std: np.ndarray):
-        self.mean = torch.tensor(mean, dtype=torch.float32)
-        self.std = torch.tensor(std, dtype=torch.float32)
-
-    def __len__(self):
-        return len(self.df)
-
-    def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        x_num = torch.tensor(row[self.numeric_cols].values.astype(np.float32))
-        if self.mean is not None:
-            x_num = (x_num - self.mean) / (self.std + 1e-8)
-        y = int(row[self.target_col])
-        if self.sym2id is not None:
-            sym_id = self.sym2id.get(row["symbol"], 0)
-            sym_id = torch.tensor(sym_id, dtype=torch.long)
-            return x_num, sym_id, y
-        else:
-            return x_num, y
-
 class CNN(nn.Module):
-    """
-    Convolutional Neural Network (CNN) model for tabular data.
-    """
-    def __init__(self, in_channels: int, n_classes: int = 3, hidden: tuple[int, ...] = HIDDEN_LAYERS, pdrop: float = 0.1):
+    def __init__(self,
+                 input_dim: int,
+                 num_classes: int,
+                 kernel_size: int = 5,
+                 dropout: float = 0.3,
+                 mlp_hidden: tuple[int, ...] = HIDDEN_LAYERS,
+                 emb_dim: int = 0,
+                 num_symbols: int = 0
+                 ):
         super().__init__()
-        layers = []
-        last = in_channels
-        for h in hidden:
-            layers += [nn.Conv1d(last, h, kernel_size=3, padding=1), nn.ReLU(), nn.Dropout(pdrop)]
-            last = h
-        layers += [nn.AdaptiveAvgPool1d(1), nn.Flatten(), nn.Linear(last, n_classes)]
-        self.net = nn.Sequential(*layers)
 
-    def forward(self, x):
-        # x shape: (batch_size, in_channels, seq_length)
-        return self.net(x)
-    
+        # Conv trunk: (B, C_in=input_dim, T) -> (B, 256)
+        self.cnn = nn.Sequential(
+            nn.Conv1d(input_dim, 64, kernel_size=kernel_size, padding=1), # (B, 64, T) 
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Conv1d(64, 128, kernel_size=kernel_size, padding=1), # (B, 128, T)
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Conv1d(128, 256, kernel_size=kernel_size, padding=1),    # (B, 256, T)
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.AdaptiveAvgPool1d(1),  # (B, 256, 1)
+            nn.Flatten(),             # (B, 256)
+        )
 
-# -------------------------
-# Training utils
-# -------------------------
+        self.use_emb = emb_dim > 0 and num_symbols > 0 
+        if self.use_emb:
+            self.symbol_emb = nn.Embedding(num_symbols, emb_dim) # (num_symbols, emb_dim)
+            mlp_input_dim = 256 + emb_dim
+        else:
+            mlp_input_dim = 256
 
-def compute_class_weights(y: np.ndarray, n_classes: int = 3):
-    """
-    Compute class weights for imbalanced datasets.
-    Arguments
-    ---------
-    y: np.ndarray
-        The target labels.
-    n_classes: int
-        The number of classes.
-    Returns
-    -------
-    torch.Tensor
-        The class weights.
-    """
-    # inverse frequency
-    counts = np.bincount(y, minlength=n_classes).astype(np.float32)
-    weights = counts.sum() / (counts + 1e-8)
-    weights = weights / weights.mean()
-    return torch.tensor(weights, dtype=torch.float32)
+        mlp_layers = []
+        prev_dim = mlp_input_dim
+        for hidden_dim in mlp_hidden:
+            mlp_layers.append(nn.Linear(prev_dim, hidden_dim))      
+            mlp_layers.append(nn.ReLU())
+            mlp_layers.append(nn.Dropout(dropout))
+            prev_dim = hidden_dim
+        mlp_layers.append(nn.Linear(prev_dim, num_classes))
+        self.mlp = nn.Sequential(*mlp_layers)
+
+    def forward(self, x_num: torch.Tensor, sym_id: torch.Tensor | None = None):
+        # x_num: (B, seq_len, num_features)
+        x_num = x_num.permute(0, 2, 1)  # -> (B, num_features, seq_len)
+        features = self.cnn(x_num)      # (B, 256)
+
+        if self.use_emb and sym_id is not None:
+            # ensure sym_id is long: sym_id.dtype == torch.long
+            sym_emb = self.symbol_emb(sym_id)
+            features = torch.cat([features, sym_emb], dim=1)
+
+        logits = self.mlp(features)     # (B, num_classes)
+        return logits
 
 
-def evaluate(model, loader, device, use_emb: bool = False):
+def evaluate(
+    model: CNN,
+    loader: DataLoader,
+) -> tuple[float, np.ndarray, np.ndarray]:
     """
     Evaluate the model on the given data loader.
-    Arguments
-    ---------
-    model: nn.Module
-        The model to evaluate.
-    loader: DataLoader
-        The data loader for the evaluation dataset.
-    device: torch.device
-        The device to run the evaluation on.
-    use_emb: bool
-        Whether to use symbol embeddings.
-
     Returns
     -------
-    Tuple[float, np.ndarray, np.ndarray]
-        The macro F1 score, true labels, and predicted labels.
+    macro_f1: float
+        Macro F1 score.
+    y_true: np.ndarray
+        True labels.
+    y_pred: np.ndarray
+        Predicted labels.
     """
     model.eval()
-    ys, ps = [], []
+    # infer device from model
+    device = next(model.parameters()).device
+
+    ys: list[np.ndarray] = []
+    ps: list[np.ndarray] = []
+
     with torch.no_grad():
         for batch in loader:
-            if use_emb:
-                x_num, sym_id, y = batch
-                x_num, sym_id = x_num.to(device), sym_id.to(device)
-                logits = model(x_num, sym_id)
-            else:
-                x_num, y = batch
-                x_num = x_num.to(device)
-                logits = model(x_num)
-            prob = torch.softmax(logits, dim=1)
-            ps.append(prob.detach().cpu().numpy())
-            ys.append(y.numpy())
-    y_true = np.concatenate(ys)
-    y_prob = np.concatenate(ps)
-    y_pred = y_prob.argmax(axis=1)
+            # move inputs to the same device as model
+            x_num = batch['features'].to(device, non_blocking=True)
+            sym_id = batch['symbol'].to(device, non_blocking=True)
+            # labels can stay on cpu, but if they are on gpu, move back:
+            y = batch['target'].long().to("cpu")
+            print("Batch shapes:", x_num.shape, sym_id.shape, y.shape)
+            logits = model(x_num, sym_id)          # (B, num_classes)
+            prob = torch.softmax(logits, dim=1)    # (B, num_classes)
+
+            ps.append(prob.cpu().numpy())
+            ys.append(y.cpu().numpy())
+    print("Evaluation complete. Shapes: ", [p.shape for p in ps], [y.shape for y in ys])
+    y_true = np.concatenate(ys, axis=0)   # (N,)
+    y_prob = np.concatenate(ps, axis=0)   # (N, C)
+    y_pred = y_prob.argmax(axis=1)        # (N,)
+
+    print(f"Classification Report:{classification_report(y_true, y_pred)}")
+
     macro_f1 = f1_score(y_true, y_pred, average="macro")
     return macro_f1, y_true, y_pred
 
 
+
 def train_loop(
-    model, 
-    train_loader, 
-    val_loader,
-    device, 
-    class_weights,
-    epochs=50, 
-    lr=3e-4, 
-    use_emb=False
+    model: CNN,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    optimizer: optim.Optimizer,
+    config: SeqClassDataConfig,
 ):
-    """
-    Training loop for the model.
-    Arguments
-    ---------
-    model: nn.Module
-        The model to train.
-    train_loader: DataLoader
-        The data loader for the training dataset.
-    val_loader: DataLoader
-        The data loader for the validation dataset.
-    device: torch.device
-        The device to run the training on.
-    class_weights: torch.Tensor
-        The class weights for the loss function.
-    epochs: int
-        The number of training epochs.
-    lr: float
-        The learning rate.
-    use_emb: bool
-        Whether to use symbol embeddings.
-    Returns
-    -------
-    nn.Module
-        The trained model.
-    """
-    model.to(device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
-    opt = torch.optim.AdamW(model.parameters(), lr=lr)
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model.to(device=device)
+    
+
     best_f1, best_state = -1.0, None
-    for ep in range(1, epochs + 1):
+
+    for ep in range(1, config.num_epochs + 1):
         model.train()
         for batch in train_loader:
-            if use_emb:
-                x_num, sym_id, y = batch
-                x_num, sym_id, y = x_num.to(device), sym_id.to(device), torch.tensor(y, dtype=torch.long, device=device)
-                logits = model(x_num, sym_id)
-            else:
-                x_num, y = batch
-                x_num, y = x_num.to(device), torch.tensor(y, dtype=torch.long, device=device)
-                logits = model(x_num)
-            loss = criterion(logits, y)
-            opt.zero_grad()
+            x_num = batch['features'].to(device)
+            sym_id = batch['symbol'].to(device)
+            y = batch['target'].to(device, non_blocking=True)
+            logits = model(x_num, sym_id)
+            y = y.long()
+            loss = nn.CrossEntropyLoss()(logits, y)
+            optimizer.zero_grad(set_to_none=True)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step()
-        val_f1, _, _ = evaluate(model, val_loader, device, use_emb)
+            optimizer.step()
+
+        val_f1, _, _ = evaluate(model, val_loader)
         print(f"Epoch {ep:03d} | val macro-F1: {val_f1:.4f}")
         if val_f1 > best_f1:
             best_f1 = val_f1
@@ -234,18 +196,48 @@ def handler(dataconfig: SeqClassDataConfig, gc: GoldConfig):
     None
     """
     set_seed(dataconfig.seed)
-    device = torch.device("cuda" if torch.cuda.is_available() and not dataconfig.cpu else "cpu")
 
-    df = read_gold(Path(dataconfig.gold_dir))
-    # Pick the label column based on horizon inferred from directory name if needed.
-    # Here we assume h=1 gold folder -> label_h1 present.
 
-    # Basic cleaning
-    df = df.dropna(subset=["label_h1"]).copy()
-    target_col, sym_col, numeric_cols = build_feature_space(df)
+    train_dataset = SeqClassificationDataset(
+        config=dataconfig,
+        train=True,
+    )
+    val_dataset = SeqClassificationDataset(
+        config=dataconfig,
+        train=False,
+    )   
+    model = CNN(
+        input_dim=len(dataconfig.numeric_cols),
+        num_classes=dataconfig.num_classes,
+        dropout=dataconfig.dropout,
+        kernel_size=dataconfig.kernel_size,
+        mlp_hidden=dataconfig.MLP_HIDDEN,
+        emb_dim=dataconfig.emb_dim ,
+        num_symbols=len(dataconfig.sym2id),
+    )
+    opt = torch.optim.AdamW(model.parameters(), lr=dataconfig.lr, weight_decay=dataconfig.wd)
 
-    # Iterable Dataset: 
-
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=dataconfig.batch_size,
+        shuffle=False,
+        num_workers=dataconfig.num_workers,
+        pin_memory=dataconfig.pin_memory,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=dataconfig.batch_size,
+        shuffle=False,
+        num_workers=dataconfig.num_workers,
+        pin_memory=dataconfig.pin_memory,
+    )   
+    trained_model = train_loop(
+        model,
+        train_loader,
+        val_loader,
+        opt,
+        dataconfig,
+    )
 
 
 if __name__ == "__main__":
