@@ -20,7 +20,7 @@ formatter = ColoredFormatter(
     datefmt="%Y-%m-%d %H:%M:%S",
     log_colors={
         "DEBUG": "blue",
-        "INFO": "greens",
+        "INFO": "green",
         "WARNING": "yellow",
         "ERROR": "red",
         "CRITICAL": "bold_red",

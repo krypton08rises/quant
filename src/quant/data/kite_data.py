@@ -22,7 +22,12 @@ timestamp = date.today().isoformat()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-
+"""
+TODO:
+Remove normalization over global statistics here -- should be done rolling window during training/inference only. 
+Add tests, typehints, docstrings.
+Add functionality to backfill data from a given date to today.
+"""
 async def backfill_index(
     index_name: str, 
     interval  : str, 

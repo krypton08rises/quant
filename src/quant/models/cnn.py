@@ -13,10 +13,8 @@ python train_torch_tabular.py \
   --batch-size 512 --epochs 50 --lr 3e-4 --use-emb
 """
 from __future__ import annotations
-from pathlib import Path
 import random
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -67,8 +65,8 @@ class CNN(nn.Module):
             nn.Conv1d(128, 256, kernel_size=kernel_size, padding=1),    # (B, 256, T)
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.AdaptiveAvgPool1d(1),  # (B, 256, 1)
-            nn.Flatten(),             # (B, 256)
+            nn.AdaptiveAvgPool1d(1),  # (B, 512, 1)
+            nn.Flatten(),             # (B, 512)
         )
 
         self.use_emb = emb_dim > 0 and num_symbols > 0 
@@ -161,7 +159,7 @@ def train_loop(
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model.to(device=device)
     
-
+    weights = torch.tensor([1.0, 10.0, 10.0], device=device)
     best_f1, best_state = -1.0, None
 
     for ep in range(1, config.num_epochs + 1):

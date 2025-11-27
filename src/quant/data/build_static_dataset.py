@@ -47,7 +47,8 @@ Tests :
 - upper shadow, lower shadow, tick body can be 0; just not all 3 at the same time
 - need to mark tick body as positive / negative next time I download data
 Details about bronze data: 
-
+TODO: 
+- Identify simple rule based signals like MA crossover, RSI overbought/oversold, etc; besides computing values.
 """
 
 def make_silver(df: pd.DataFrame, cfg: SilverConfig) -> pd.DataFrame:

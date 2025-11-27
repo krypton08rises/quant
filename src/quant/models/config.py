@@ -26,8 +26,8 @@ class SeqClassDataConfig(BaseModel):
     interval: Interval = Interval.DAY
 
     # Model Parameters
-    max_seq_length: int = 32 # Maximum length of days seen by the model
-    kernel_size: int = 5
+    max_seq_length: int = 20 # Maximum length of days seen by the model
+    kernel_size: int = 10
     num_classes: int = 3
     dropout:float = 0.3
     MLP_HIDDEN: tuple[int, ...] = HIDDEN_LAYERS
