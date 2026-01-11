@@ -16,7 +16,7 @@ HIDDEN_LAYERS:tuple[int] = (256, 128, 64, 16)
 """ Default hidden layer sizes for MLP models """
 
 
-NUM_COLS = ['upper_shadow', 'lower_shadow', 'tick_body', 'diff', 'percent_change',
+NUM_COLS = ['upper_shadow', 'lower_shadow', 'tick_body', 'diff', 'raw_percent_change',
     'rsi_14', 'macd_line', 'macd_signal', 'macd_hist',
     'bb_mid', 'bb_up', 'bb_lo', 'bb_pct', 'prev_close', 'atr_14', 'sma_5',
     'ema_5', 'close_over_sma_5', 'sma_10', 'ema_10', 'close_over_sma_10',

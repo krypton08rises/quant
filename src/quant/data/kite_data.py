@@ -4,9 +4,8 @@ and update data for symbols.
 Saves data and metadata to pickle files in data/historical directory.
 Can be used to keep data updated and model trained on a daily basis.
 """
-
-import os
 import asyncio
+import os
 import logging
 from pathlib import Path
 from datetime import date, datetime, timedelta
@@ -14,8 +13,8 @@ import argparse
 
 import pandas as pd
 
-from ._common import Indices
-from .models import KiteDataHandler
+from quant.data._common import Indices
+from quant.data.models import KiteDataHandler
 
 # Configure logging
 timestamp = date.today().isoformat()
@@ -35,7 +34,6 @@ async def backfill_index(
     indices_dir: Path = Path("data/indices"),
     out_dir: Path = Path("data/historical/bronze/")
 ):
-    
     """
     Backfill historical data for a given index from the specified date.
     If the data already exists, it will load the existing data and append new data.
@@ -67,12 +65,12 @@ async def backfill_index(
     
     symbols = pd.read_csv(idx_file)['Symbol'].unique().tolist()
     out_path = out_dir / f"{index_name}_{interval}.pkl"
-    
+    logger.info(f"Out path: {out_path}")
+
     if out_path.exists():
         logger.info(f"Loading existing data for {index_name}")
-        handler.load(out_path)
+        handler.data = handler.load(out_path)
         last_date = pd.to_datetime(handler.data['date']).min().date()
-
         end_date = last_date + timedelta(days=1)
     else:
         end_date = None
@@ -88,30 +86,6 @@ async def backfill_index(
     if not df_new.empty:
         handler.save(out_path)
         logger.info(f"Backfill complete for {index_name} from {from_date} to {end_date}")
-
-
-def update_symbol(symbol: str, interval: str,
-                  out_dir: Path = Path("data/historical/bronze/")):
-    handler = KiteDataHandler()
-    out_path = out_dir / f"{symbol}_{interval}.pkl"
-
-    if out_path.exists():
-        handler.load(out_path)
-        # get last timestamp
-        last_ts = pd.to_datetime(handler.data['date']).max()
-        start_dt = last_ts + timedelta(minutes=int(interval.replace('minute','')))
-    else:
-        start_dt = None
-    end_dt = datetime.now()             
-    df_new = handler.fetch_historical([symbol], interval, start_dt.date(), end_dt.date())
-    if not df_new.empty:
-        # concatenate
-        if handler.data is not None:
-            handler.data = pd.concat([handler.data, df_new], ignore_index=True)
-        else:
-            handler.data = df_new
-        handler.save(out_path)
-        logger.info(f"Updated {symbol} up to {end_dt}")
 
 
 async def handler():
@@ -131,7 +105,6 @@ async def handler():
     parser.add_argument('--interval', default='day', help='Data interval -- accompanied by lookback days')
     parser.add_argument('--date', type=lambda s: datetime.strptime(s, '%Y-%m-%d').date(),
                         help='Backfill from this date (YYYY-MM-DD)', default=None)
-    parser.add_argument('--symbol', help='Single symbol to update')
     args = parser.parse_args()
 
 
@@ -154,8 +127,8 @@ async def handler():
                 index_file = Path(f"data/indices/{index}.csv")
                 await backfill_index(index, interval, args.date)
 
-    if args.symbol:
-        update_symbol(args.symbol, args.interval)
-
 if __name__ == '__main__':
-    handler()
+    try:
+        asyncio.run(handler())
+    except KeyboardInterrupt:
+        logger.warning("Process Interrupted by user...")

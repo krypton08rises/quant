@@ -46,6 +46,7 @@ class SeqClassificationDataset(IterableDataset):
         self.balance_classes = getattr(config, "balance_classes", False)
         self._stock_cache: dict[str, dict[str, Any]] = {}
 
+
     def _prepare_stock(self, filename: str, rnd: random.Random) -> dict:
         if filename in self._stock_cache:
             return self._stock_cache[filename]
@@ -84,6 +85,46 @@ class SeqClassificationDataset(IterableDataset):
         }
         self._stock_cache[filename] = cache_entry
         return cache_entry
+
+
+    
+    def _normalize(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Normalize features.
+
+        Parameters
+        ----------
+        x: torch.Tensor
+            Shape (seq_len, num_features) or (num_features,) etc.
+
+        Returns
+        -------
+        torch.Tensor
+            Normalized tensor with same shape as x.
+        """
+        # estimate mean and std from data column wise 
+        
+        data_np = x.numpy()
+        _mu = torch.from_numpy(np.mean(data_np, axis=0)).float()      
+        _sigma = torch.from_numpy(np.std(data_np, axis=0)).float()    
+
+        # to avoid division by zero
+        _sigma[_sigma == 0] = 1.0
+    
+        # If x is (seq_len, num_features)
+        if x.ndim == 2 and x.shape[-1] == _mu.shape[0]:
+            return (x - _mu) / _sigma  # broadcast over seq_len
+        # If x is (num_features, seq_len), transpose, normalize, transpose back
+        if x.ndim == 2 and x.shape[0] == _mu.shape[0]:
+            return ((x.T - _mu) / _sigma).T
+
+        # If x is just (num_features,)
+        if x.ndim == 1 and x.shape[0] == _mu.shape[0]:
+            return (x - _mu) / _sigma   
+        raise ValueError(f"Unexpected feature shape {x.shape} for normalization")
+
+
+
 
     def __iter__(self) -> Generator:
         """
@@ -137,8 +178,11 @@ class SeqClassificationDataset(IterableDataset):
                         if start_idx < 0:
                             continue  # should not happen due to filtering, but safe
 
+                        assert end_idx > start_idx, "end_idx must be greater than start_idx"
+
                         window = feat_np[start_idx:end_idx]         # (seq_len, num_features)
                         x_num = torch.from_numpy(window)            # float32
+                        x_num = self._normalize(x_num)
                         sym_tensor = torch.tensor(sym_id_val, dtype=torch.long)
                         y_tensor = torch.tensor(c, dtype=torch.long)
 
@@ -171,6 +215,7 @@ class SeqClassificationDataset(IterableDataset):
                     label_val = int(labels_np[label_idx])
                     window = feat_np[start_idx:end_idx]
                     x_num = torch.from_numpy(window)
+                    x_num = self._normalize(x_num)
                     sym_tensor = torch.tensor(sym_id_val, dtype=torch.long)
                     y_tensor = torch.tensor(label_val, dtype=torch.long)
 

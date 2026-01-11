@@ -10,10 +10,9 @@ from typing import Tuple
 import pandas as pd
 import numpy as np
 from kiteconnect import KiteConnect
-from sklearn.preprocessing import MinMaxScaler
 import dill
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 from ._common import INTERVAL_LOOKBACK, MAX_DAYS_PER_CALL
 # Configure logging
 timestamp = date.today().isoformat()
@@ -29,7 +28,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 logger = logging.getLogger(__name__)
 
 
-class KiteDataHandler(BaseModel):
+class KiteDataHandler:
     """
     Handler for fetching, processing, saving, and loading historical data from Kite Connect API.
     """
@@ -42,7 +41,6 @@ class KiteDataHandler(BaseModel):
         max_retries: int = 3,
         retry_delay: int = 1
     ):
-        
         self.kite = self._get_kite_session(api_key, token_path)
         self.instrument_map = self._load_instruments(inst_csv)
         self.scalers = {}
@@ -73,7 +71,7 @@ class KiteDataHandler(BaseModel):
         logger.info(f"Logged in as {profile['user_name']}")
         return kite
 
-    async def _load_instruments(self, path: Path) -> dict:
+    def _load_instruments(self, path: Path) -> dict:
         """
         Loads instrument tokens from CSV file.
         Arguments
@@ -174,7 +172,7 @@ class KiteDataHandler(BaseModel):
 
             # process features/scalers
             full_df = self._generate_features(full_df)
-            full_df = self._normalize(full_df)
+            # full_df = self._normalize(full_df)
             self.data = full_df
             return full_df
         else:
@@ -191,24 +189,6 @@ class KiteDataHandler(BaseModel):
         df['classification_marker'] = df['percent_change'].astype(int)
         return df
 
-    def _normalize(self, df: pd.DataFrame) -> pd.DataFrame:
-        df['volume'] = df['volume'].apply(lambda x: np.log10(x) if x > 0 else 0)
-        for sym in df['symbol'].unique():
-            sub = df[df['symbol'] == sym]
-
-            # normalize 
-            for col in ['close', 'diff', 'percent_change',
-                        'upper_shadow', 'lower_shadow', 'tick_body']:
-                key = f"{sym}_{col}"
-                scaler = MinMaxScaler((0, 1))
-                values = sub[[col]]
-                try: 
-                    df.loc[sub.index, f"normalized_{col}"] = scaler.fit_transform(values)
-                except ValueError as e:
-                    logger.warning(f"Failed to scale {col} for {sym}: {e}")
-                self.scalers[key] = scaler
-        df.drop(columns=['shifted_close'], inplace=True)
-        return df
 
     def save(self, file_path: Path):
         if self.data is None:
@@ -221,13 +201,13 @@ class KiteDataHandler(BaseModel):
         logger.info(f"Saved data+metadata to {file_path.with_suffix('.pkl')}")
 
     @classmethod
-    def load(file_path: Path):
+    def load(cls, file_path: Path):
         with open(file_path.with_suffix('.pkl'), 'rb') as f:
             payload = dill.load(f)
         data = payload.get('data')
         scalers = payload.get('scalers', {})
         logger.info(f"Loaded data+metadata from {file_path.with_suffix('.pkl')}")
-        return data, scalers
+        return data
 
 
 

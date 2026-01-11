@@ -2,10 +2,11 @@ import dill
 import pandas as pd 
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, overload
 from dataclasses import dataclass
 
 from .models import SilverConfig, GoldConfig
+from ._common import Indices, Interval
 
 from logging import getLogger
 logger = getLogger(__name__)
@@ -77,8 +78,11 @@ def group_sort(df: pd.DataFrame, sym_col: str, dt_col: str) -> pd.DataFrame:
     return df
 
 
-
-def load_bronze(index: str, interval: str, base_dir: Path) -> pd.DataFrame:
+def load_bronze(
+    index: str, 
+    interval: str, 
+    base_dir: Path,
+) -> tuple[pd.DataFrame, Optional[dict]]:
     """
     Load a bronze pickle file.
     This file contains per index stock data with raw prices and engineered candle features.
@@ -95,14 +99,11 @@ def load_bronze(index: str, interval: str, base_dir: Path) -> pd.DataFrame:
     pd.DataFrame
         The loaded bronze DataFrame.
     """
-    pkl = base_dir / f"{index}_{interval}.pkl"
-    if not pkl.exists():
-        raise FileNotFoundError(f"Bronze pickle not found: {pkl}")
-    with open(pkl, "rb") as f:
-        obj = dill.load(f)
-    df: pd.DataFrame = obj.get('data', pd.DataFrame()).copy()
-    scalers: Optional[dict] = obj.get('scalers', None)
-    
+    parquet_file = base_dir / f"{index}_{interval}.parquet"
+    if not parquet_file.exists():
+        raise FileNotFoundError(f"Bronze parquet not found: {parquet_file}")
+    df = pd.read_parquet(parquet_file)
+            
     # Normalize column names used downstream
     # Expecting columns: Date, Open, High, Low, Close, Volume, Ticker and engineered fields
     rename = {
@@ -119,19 +120,12 @@ def load_bronze(index: str, interval: str, base_dir: Path) -> pd.DataFrame:
     for k, v in rename.items():
         if k in df.columns:
             df = df.rename(columns={k: v})
-    for sym, g in df.groupby("symbol"): 
-        close_key = f"{sym}_close"
-        pct_change_key = f"{sym}_percent_change"
-        assert close_key in scalers, f"Missing scaler for 'close' prices of {close_key}"
-        assert pct_change_key in scalers, f"Missing scaler for 'percent_change' of {pct_change_key}"
-
         # inverse transform to get raw prices -- only 'close' and 'percent_change' are normalized for now
-        df.loc[g.index, "raw_close"] = scalers[close_key].inverse_transform(g[["close"]]).ravel()
-        df.loc[g.index, "raw_percent_change"] = scalers[pct_change_key].inverse_transform(g[["percent_change"]]).ravel()
     df = ensure_dt(df, "date")
     df = group_sort(df, "symbol", "date")
 
     return df.dropna(axis=0)
+
 
 def load_silver(symbol: str, gc: GoldConfig) -> Optional[pd.DataFrame]:
     """

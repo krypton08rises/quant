@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 """
 Base Columns: 
 'date', 'open', 'high', 'low', 'close'(N), 'volume'(lgN), 'symbol', 'upper_shadow'(N), 'lower_shadow'(N), 'tick_body'(N), 'diff'(N), 'percent_change'(N),
-       'classification_marker', 'raw_close', 'raw_percent_change'
+       'classification_marker', 'close', 'raw_percent_change'
 Tests : 
 - check if volume is 0 ( log normalized )  
 - upper shadow, lower shadow, tick body can be 0; just not all 3 at the same time
@@ -49,6 +49,7 @@ Tests :
 Details about bronze data: 
 TODO: 
 - Identify simple rule based signals like MA crossover, RSI overbought/oversold, etc; besides computing values.
+- Z-score of Bollinger band deviations with volatility contraction then re-expansion.
 """
 
 def make_silver(df: pd.DataFrame, cfg: SilverConfig) -> pd.DataFrame:
@@ -88,25 +89,25 @@ def make_silver(df: pd.DataFrame, cfg: SilverConfig) -> pd.DataFrame:
         sdf = sdf.copy()
 
         # RSI
-        sdf[f"rsi_{cfg.rsi_period}"] = rsi_wilder(sdf["raw_close"], cfg.rsi_period)
+        sdf[f"rsi_{cfg.rsi_period}"] = rsi_wilder(sdf["close"], cfg.rsi_period)
 
         # MACD
-        macd_line, signal_line, hist = macd(sdf["raw_close"], cfg.macd_fast, cfg.macd_slow, cfg.macd_signal)
+        macd_line, signal_line, hist = macd(sdf["close"], cfg.macd_fast, cfg.macd_slow, cfg.macd_signal)
         sdf["macd_line"], sdf["macd_signal"], sdf["macd_hist"] = macd_line, signal_line, hist
 
         # Bollinger
-        mid, up, lo, pct = bollinger(sdf["raw_close"], cfg.bb_window, cfg.bb_k)
+        mid, up, lo, pct = bollinger(sdf["close"], cfg.bb_window, cfg.bb_k)
         sdf["bb_mid"], sdf["bb_up"], sdf["bb_lo"], sdf["bb_pct"] = mid, up, lo, pct
 
         # ATR (use previous close)
-        sdf["prev_close"] = sdf["raw_close"].shift(1)
+        sdf["prev_close"] = sdf["close"].shift(1)
         sdf["atr_14"] = atr(sdf["high"], sdf["low"], sdf["prev_close"], period=14)
 
         # Moving averages & EMA deltas
         for w in cfg.ma_windows:
-            sdf[f"sma_{w}"] = sdf["raw_close"].rolling(w, min_periods=w).mean()
-            sdf[f"ema_{w}"] = ema(sdf["raw_close"], w)
-            sdf[f"close_over_sma_{w}"] = sdf["raw_close"] / sdf[f"sma_{w}"] - 1
+            sdf[f"sma_{w}"] = sdf["close"].rolling(w, min_periods=w).mean()
+            sdf[f"ema_{w}"] = ema(sdf["close"], w)
+            sdf[f"close_over_sma_{w}"] = sdf["close"] / sdf[f"sma_{w}"] - 1
 
         # Rolling volatility on percent_change
         sdf["volatility_10"] = sdf["raw_percent_change"].rolling(cfg.vol_window, min_periods=cfg.vol_window).std()
@@ -146,25 +147,25 @@ def make_silver(df: pd.DataFrame, cfg: SilverConfig) -> List[str]:
             continue
 
         # RSI
-        sdf[f"rsi_{cfg.rsi_period}"] = rsi_wilder(sdf["raw_close"], cfg.rsi_period)
+        sdf[f"rsi_{cfg.rsi_period}"] = rsi_wilder(sdf["close"], cfg.rsi_period)
 
         # MACD
-        macd_line, signal_line, hist = macd(sdf["raw_close"], cfg.macd_fast, cfg.macd_slow, cfg.macd_signal)
+        macd_line, signal_line, hist = macd(sdf["close"], cfg.macd_fast, cfg.macd_slow, cfg.macd_signal)
         sdf["macd_line"], sdf["macd_signal"], sdf["macd_hist"] = macd_line, signal_line, hist
 
         # Bollinger
-        mid, up, lo, pct = bollinger(sdf["raw_close"], cfg.bb_window, cfg.bb_k)
+        mid, up, lo, pct = bollinger(sdf["close"], cfg.bb_window, cfg.bb_k)
         sdf["bb_mid"], sdf["bb_up"], sdf["bb_lo"], sdf["bb_pct"] = mid, up, lo, pct
 
         # ATR (use previous close)
-        sdf["prev_close"] = sdf["raw_close"].shift(1)
+        sdf["prev_close"] = sdf["close"].shift(1)
         sdf["atr_14"] = atr(sdf["high"], sdf["low"], sdf["prev_close"], period=14)
 
         # Moving averages & EMA deltas
         for w in cfg.ma_windows:
-            sdf[f"sma_{w}"] = sdf["raw_close"].rolling(w, min_periods=w).mean()
-            sdf[f"ema_{w}"] = ema(sdf["raw_close"], w)
-            sdf[f"close_over_sma_{w}"] = sdf["raw_close"] / sdf[f"sma_{w}"] - 1
+            sdf[f"sma_{w}"] = sdf["close"].rolling(w, min_periods=w).mean()
+            sdf[f"ema_{w}"] = ema(sdf["close"], w)
+            sdf[f"close_over_sma_{w}"] = sdf["close"] / sdf[f"sma_{w}"] - 1
 
         # Rolling volatility on percent_change
         sdf["volatility_10"] = sdf["raw_percent_change"].rolling(cfg.vol_window, min_periods=cfg.vol_window).std()
@@ -208,7 +209,7 @@ def make_gold_from_silver(symbols: list[str], gc: GoldConfig) -> None:
         # Build future percent_change for horizons and derive labels
         for h in gc.horizons:
 
-            logret = np.log(sdf["raw_close"]).diff()
+            logret = np.log(sdf["close"]).diff()
             fwd_logret = logret.rolling(window=h, min_periods=h).sum().shift(-h)
             fwd_pct = (np.exp(fwd_logret) - 1.0) * 100.0
             sdf[f"fwd_pct_h{h}"] = fwd_pct
@@ -229,7 +230,7 @@ def run_build(
 ) -> None:
     
     # Bronze → Silver
-    bronze = load_bronze(config.index, config.interval, config.base_dir.joinpath("bronze"))
+    bronze = load_bronze(config.index, config.interval, config.base_dir.joinpath("raw_bronze"))
     bronze["index"] = config.index  
     symbols = bronze['symbol'].unique().tolist()
 
