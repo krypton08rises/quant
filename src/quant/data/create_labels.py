@@ -1,15 +1,13 @@
 # datasets/streaming_sequence.py
 from __future__ import annotations
-import dill
-import math
-import random
+
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 
+import random 
 import numpy as np
-
+from typing import Optional, Tuple, Dict
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 # Logs are for printing while code execution only, not to be saved anywhere
@@ -36,9 +34,9 @@ class StreamConfig:
     folder_path: Path = Path("data/historical/")
     file_glob: str = "*day.pkl"
     label_col: str = "percent_change"     # unscaled, per your comment  
-    l_unit: str = "pct"               # "pct" -> ±2 means ±2 percentage points; "fraction" -> thresholds will be scaled by 100
-  X[sdf.index.min():sdf.index.maxX[sdf.index.min():sdf.index.maxhresh: float = 5.0                # > +2 => class 2 
-    down_thresh: float = -5.0             # < -2 => class 1
+    label_unit: str = "pct"               # "pct" -> ±2 means ±2 percentage points; "fraction" -> thresholds will be scaled by 100
+    up_thresh:float = 3.0
+    down_thresh: float = -3.0             # < -2 => class 1
     window_len: int = 30                  # L
     horizon: int = 1                      # k steps ahead label is computed at t+horizon using info up to t
     step: int = 1                         # slide stride
@@ -47,7 +45,7 @@ class StreamConfig:
         "close", 
         "volume",
         "tick_body", 
-       X[sdf.index.min():sdf.index.maxX[sdf.index.min():sdf.index.max
+        "upper_shadow",         
         "lower_shadow", 
         "diff"
     )

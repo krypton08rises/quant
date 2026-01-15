@@ -12,6 +12,7 @@ import numpy as np
 from kiteconnect import KiteConnect
 import dill
 
+from kiteconnect.exceptions import TokenException
 from pydantic import BaseModel, PrivateAttr
 from ._common import INTERVAL_LOOKBACK, MAX_DAYS_PER_CALL
 # Configure logging
@@ -41,7 +42,10 @@ class KiteDataHandler:
         max_retries: int = 3,
         retry_delay: int = 1
     ):
-        self.kite = self._get_kite_session(api_key, token_path)
+        try:
+            self.kite = self._get_kite_session(api_key, token_path)
+        except TokenException as exc:
+            logger.warning(f"Failed to login; Limited functions available \n {exc}")
         self.instrument_map = self._load_instruments(inst_csv)
         self.scalers = {}
         self.data = None
