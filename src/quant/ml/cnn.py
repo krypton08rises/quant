@@ -22,8 +22,8 @@ import torch.nn.functional as F
 
 from torch.utils.data import DataLoader
 from sklearn.metrics import classification_report, f1_score
-from ..data.utils import read_gold
-from ..data.models import GoldConfig
+from ..data.wastebin.utils import read_gold
+from ..data.kite_handler import GoldConfig
 from .config import SeqClassDataConfig
 from ._common import HIDDEN_LAYERS
 from .load import SeqClassificationDataset

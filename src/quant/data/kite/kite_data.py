@@ -14,7 +14,7 @@ import argparse
 import pandas as pd
 
 from quant.data._common import Indices
-from quant.data.models import KiteDataHandler
+from quant.data.kite.kite_handler import KiteDataHandler
 
 # Configure logging
 timestamp = date.today().isoformat()

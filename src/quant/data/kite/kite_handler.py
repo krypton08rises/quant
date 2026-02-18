@@ -14,7 +14,7 @@ import dill
 
 from kiteconnect.exceptions import TokenException
 from pydantic import BaseModel, PrivateAttr
-from ._common import INTERVAL_LOOKBACK, MAX_DAYS_PER_CALL
+from .._common import INTERVAL_LOOKBACK, MAX_DAYS_PER_CALL
 # Configure logging
 timestamp = date.today().isoformat()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
@@ -47,7 +47,6 @@ class KiteDataHandler:
         except TokenException as exc:
             logger.warning(f"Failed to login; Limited functions available \n {exc}")
         self.instrument_map = self._load_instruments(inst_csv)
-        self.scalers = {}
         self.data = None
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -174,7 +173,6 @@ class KiteDataHandler:
             full_df = pd.concat(frames, ignore_index=True)
             full_df.sort_values(by=['symbol', 'date'], inplace=True)
 
-            # process features/scalers
             full_df = self._generate_features(full_df)
             # full_df = self._normalize(full_df)
             self.data = full_df
@@ -199,7 +197,7 @@ class KiteDataHandler:
             raise ValueError("No data to save.")
         file_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info(f"Saving data+metadata to {file_path.with_suffix('.pkl')}")
-        payload = {'data': self.data, 'scalers': self.scalers}
+        payload = {'data': self.data}
         with open(file_path.with_suffix('.pkl'), 'wb') as f:
             dill.dump(payload, f)
         logger.info(f"Saved data+metadata to {file_path.with_suffix('.pkl')}")
@@ -209,65 +207,5 @@ class KiteDataHandler:
         with open(file_path.with_suffix('.pkl'), 'rb') as f:
             payload = dill.load(f)
         data = payload.get('data')
-        scalers = payload.get('scalers', {})
         logger.info(f"Loaded data+metadata from {file_path.with_suffix('.pkl')}")
         return data
-
-
-
-
-# -------------------------------
-# Bronze → Silver
-# -------------------------------
-class SilverConfig(BaseModel):
-    """
-    Configuration class for Silver features.
-    """
-    exchange: str = "NSE"
-    index: str = "nifty_50"
-    interval: str = "1d"
-    base_dir: Path = Path("data/historical/")
-    features_version: str = "v1"
-    # indicator params (override if you like)
-    rsi_period: int = 14
-    bb_window: int = 20
-    bb_k: float = 2.0
-    macd_fast: int = 12
-    macd_slow: int = 26
-    macd_signal: int = 9
-    ma_windows: Tuple[int, ...] = (5, 10, 20)
-    vol_window: int = 10  # rolling stdev on percent_change
-    label_version: str = "1"
-    horizons: int = 1
-    up: float = 3.0
-    down: float = -3.0
-
-
-
-# -------------------------------
-# Silver → Gold (labels
-# -------------------------------
-class GoldConfig(BaseModel):
-    """
-    Configuration class for gold feature extraction.
-    """
-    exchange: str = "NSE"
-    interval: str = "1d"
-    base_dir: Path = Path("data/historical/")
-    feature_version: str = "v1"
-    label_version: str = "1"
-    up_thresh: float = 2.0
-    down_thresh: float = -2.0
-    label_unit: str = "pct"  # "pct" points (e.g., 2.0) or "fraction"
-    horizons: Tuple[int, ...] = (1,4)
-
-    @staticmethod
-    def _compute_label_from_pct(x: float, down: float, up: float) -> int:
-        """
-        Compute the label for a given percent change value.
-        """
-        if x < down:
-            return 1
-        if x > up:
-            return 2
-        return 0
