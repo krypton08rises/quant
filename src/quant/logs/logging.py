@@ -15,6 +15,8 @@ logger.setLevel(logging.DEBUG)
 ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
     
+logger = logging.getLogger("quant_logger")
+logger.propagate = False  # Add this line to prevent log messages from being propagated to the root logger
 formatter = ColoredFormatter(
     "%(log_color)s[%(asctime)s] [%(levelname)s] [%(filename)s:%(funcName)s:%(lineno)d] - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",

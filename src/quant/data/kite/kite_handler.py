@@ -40,14 +40,15 @@ class KiteDataHandler:
         token_path: Path = Path("access_token.json"),
         inst_csv: Path = Path("data/historical/kite_nse_instruments.csv"),
         max_retries: int = 3,
-        retry_delay: int = 1
+        retry_delay: int = 1,   
+        data: pd.DataFrame | None = None
     ):
         try:
             self.kite = self._get_kite_session(api_key, token_path)
         except TokenException as exc:
             logger.warning(f"Failed to login; Limited functions available \n {exc}")
         self.instrument_map = self._load_instruments(inst_csv)
-        self.data = None
+        self.data = data
         self.max_retries = max_retries
         self.retry_delay = retry_delay
 

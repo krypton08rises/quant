@@ -18,7 +18,7 @@ class UncleanSymbol(BaseModel):
     symbol: str
     reason: ReasonEnum
 
-
+ 
 class MissingDates(BaseModel):
     dates: pd.DatetimeIndex
 

@@ -42,54 +42,147 @@ def resolve_holidays(grouped_missing_dates:pd.Series) -> pd.Series:
 
     return missing_series.value_counts().sort_values(ascending=False)
 
-
-def last_traded_date(df: pd.Series, date_col: BronzeColumns) -> pd.Timestamp:
+        
+def remove_phantom_ticks(df: pd.DataFrame, date_col: BronzeColumns = BronzeColumns.DATE, symbol_col: BronzeColumns = BronzeColumns.SYMBOL, min_phantom_gap_days: int = 45) -> pd.DataFrame:
     """
-    Get the last traded date from the DataFrame.
+    Identifies massive gaps (phantom ticks -> IPO date) and removes all rogue data before the *latest* massive gap.
+    """
+    df = df.sort_values([symbol_col.value, date_col.value])
+    df['time_jump'] = df.groupby(symbol_col.value)[date_col.value].diff()
+
+    # log rows of top 5 biggest time jumps for debugging
+    logger.debug(f"Top 5 biggest time jumps:\n{df[[symbol_col.value, date_col.value, 'time_jump']].nlargest(10, 'time_jump')}")
+
+    # 1. Find ALL gaps that exceed the threshold
+    threshold = pd.Timedelta(days=min_phantom_gap_days)
+    big_gaps = df[df['time_jump'] >= threshold]
+
+    if big_gaps.empty:
+        logger.info("No phantom ticks detected based on the current threshold. Returning original DataFrame.")
+        return df.drop(columns=['time_jump'])
+    
+    # 2. If a stock has multiple big gaps, the TRUE start is the date of the LATEST big gap
+    true_starts = big_gaps.groupby(symbol_col.value)[date_col.value].max()
+    
+    logger.info(f"Identified {len(true_starts)} stocks with phantom histories.")
+    
+    # 3. Map the true start dates to the main dataframe. Fill healthy stocks with an ancient date.
+    # Use the earliest date in the entire dataset as the safe default
+    safe_min_date = df[date_col.value].min()
+
+    df['true_start'] = df[symbol_col.value].map(true_starts).fillna(safe_min_date)    
+    # 4. Vectorized Filtering: Keep only rows where date >= true_start
+    clean_df = df[df[date_col.value] >= df['true_start']].copy()
+    
+    return clean_df.drop(columns=['time_jump', 'true_start'])        
+        
+def filter_active_universe(
+    df: pd.DataFrame, 
+    symbol_col: BronzeColumns = BronzeColumns.SYMBOL, 
+    date_col: BronzeColumns = BronzeColumns.DATE
+) -> pd.DataFrame:
+    """
+    Filters out stock with last active trading day before 2026.
+    
     Arguments
     ---------
     df: pd.DataFrame
-        The input DataFrame containing a date column.
+        The input DataFrame containing stock data.
+    symbol_col: BronzeColumns
+        The column name representing the stock symbol.
     date_col: BronzeColumns
-        The name of the date column in the DataFrame.
+        The column name representing the trading date.
+
     Returns
     -------
-    pd.Timestamp
-        The last traded date in the DataFrame.
+    pd.DataFrame    
+        A filtered DataFrame containing only active stocks with trading data in 2026.
     """
-    return df[date_col.value].max()
+    last_active = df.groupby(symbol_col.value)[date_col.value].max()
+    active_symbols = last_active[last_active >= pd.Timestamp("2026-01-01", tz='Asia/Kolkata')].index
+    logger.info(f"Filtering universe to {len(active_symbols)} active stocks with trading data in 2026.")
+    return df[df[symbol_col.value].isin(active_symbols)].copy()
 
+
+def get_market_holidays(df: pd.DataFrame, missing_dates: pd.Series) -> set:
+    """
+    Does the dynamic denominator math to return a verified list of market holidays based on active stocks and missing date patterns.
+    Arguments
+    ---------
+    df: pd.DataFrame
+        The input DataFrame containing stock data.
+    missing_dates: pd.Series    
+        A series of missing dates across stocks.
+    Returns
+    ------- 
+    set
+        A set of dates that are likely market holidays based on the analysis.
+    """ 
+    first_traded_dates = df.groupby(BronzeColumns.SYMBOL.value)[BronzeColumns.DATE.value].min()
+    last_traded_dates = df.groupby(BronzeColumns.SYMBOL.value)[BronzeColumns.DATE.value].max()
+
+    dates_vc = resolve_holidays(missing_dates)
+    identified, unresolved = 0, 0 
+    unresolved_dates = set()
+    for date, count in dates_vc.items():
+        # for symbols having data before this date, because obviously 'missing_dates' would not be present for the stock
+        active_symbols = ((first_traded_dates <= date) & (last_traded_dates >= date)).sum()
+        if active_symbols and count / active_symbols >= 0.9:
+            identified +=1
+        else:
+            unresolved+=1
+            unresolved_dates.add(date)
+            if not active_symbols:
+                logger.warning(f"Date {date.date()} is missing for {count} symbols but only {active_symbols} were active. This may indicate a data issue rather than a holiday.")
+    logger.info(f"Total unresolved missing dates (potential data issues): {unresolved} out of {len(dates_vc)} total missing dates. | Identified holidays: {identified}")
+    return set(dates_vc.index) - unresolved_dates, unresolved_dates
+
+
+def audit_data_quality(missing_dates: pd.Series, holidays: set) -> list:
+    """
+    Audits the missing dates against identified holidays to flag stocks with potential data quality issues.
+    Arguments
+    ---------
+    missing_dates: pd.Series
+        A series of missing dates across stocks.
+    holidays: set
+        A set of dates that are likely market holidays based on the analysis.
+    Returns
+    -------
+    list
+        A list of stocks with the most missing dates that are not explained by holidays, indicating potential data quality issues.
+    """
+    bad_apples = {}
+    for symbol, missing in missing_dates.items():
+        gaps = len(missing.difference(holidays))
+        if gaps > 0:
+            bad_apples[symbol] = gaps
+    worst_stocks = sorted(bad_apples.items(), key=lambda x: x[1], reverse=True)[:10]
+    logger.info(f"Top 10 stocks with most missing dates (potential data issues): {worst_stocks}")
+    return worst_stocks
 
 def main():
-    """
-    Parse through all bronze data files, identify missing dates for each symbol besides weekends and holidays, and log the results.
-
-    """
     for pth in Path(BRONZE_DIR).glob("*day.pkl"):
-        logger.info(f"Processing Symbol: {pth.stem.split('_')[0]}")
         df = KiteDataHandler.load(pth)
-
-        # Test last traded date was in 2026 to ensure we have recent data
-        last_dates = df.groupby(BronzeColumns.SYMBOL.value).apply(lambda x: last_traded_date(x, date_col=BronzeColumns.DATE))
-        if (last_dates < pd.Timestamp("2026-01-01", tz='Asia/Kolkata')).any():
-            # filter out symbols with last traded date before 2026 for more accurate missing date analysis
-            last_dates = last_dates[last_dates >= pd.Timestamp("2026-01-01", tz='Asia/Kolkata')]
-            logger.warning(f"Last traded date for some symbols is before 2026: {len(last_dates)} symbols will be included in missing date analysis, {len(df[BronzeColumns.SYMBOL.value].unique()) - len(last_dates)} symbols will be excluded")
-        # Following line converts the missing_dates to a numpy.ndarray, which is failing the resolve_holidays function. We need to ensure it remains a DatetimeIndex for consistency.
-
+        df[BronzeColumns.DATE.value] = df[BronzeColumns.DATE.value].dt.normalize()
+        
+        # 1. Filter out dead stocks
+        df = filter_active_universe(df)
+        
+        # 2. Clean known data artifacts (Phantom Ticks) FIRST
+        df = remove_phantom_ticks(df)
+        
+        # 3. Now run your missing dates logic on the CLEANED data
         missing_dates = df.groupby(BronzeColumns.SYMBOL.value).apply(lambda x: find_missing_dates(x, date_col=BronzeColumns.DATE))
+        holidays, unresolved_dates = get_market_holidays(df, missing_dates)
+        
+        # 4. Audit what's left
+        worst_stocks = audit_data_quality(missing_dates, holidays)
+        
+        # 5. Save if successful
+        # if not worst_stocks:
+        #      KiteDataHandler.save(df, pth.with_name(pth.stem.replace('_day', '_day_cleaned') + |.suffix))
 
-        resolved_holidays = resolve_holidays(missing_dates)
-
-        # We have a pandas series with value counts of missing dates across all symbols. 
-        # See if 95% of the symbols are missing the same date, 
-        # Also see if the remaining 5% of the missing dates are < 2010, which is fine because only a small number of stocks would have been actively traded back then. We are concerned with all data.
-        total_symbols = len(df[BronzeColumns.SYMBOL.value].unique())
-        holiday_threshold = total_symbols * 0.9
-        holidays = resolved_holidays[resolved_holidays >= holiday_threshold].index
-        logger.info(f"Identified {len(holidays)} holidays based on missing date consensus ")    
-        logger.info(f"Number of total symbols:{total_symbols} \n Number of days missing from 95% of symbols: {len(holidays)} \n Remaining missing dates: {len(resolved_holidays) - len(holidays)}")
-
-
+            
 if __name__ == "__main__":
     main()
