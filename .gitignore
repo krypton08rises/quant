@@ -1,4 +1,6 @@
 tests/data/
+src/quant/data/audit/plots/
+src/quant/data/audit/rolling_audits/
 /__pycache__/
 /.env
 /.idea/

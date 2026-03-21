@@ -1,13 +1,19 @@
 import pandas as pd
+
+from pathlib import Path
 from enum import Enum, StrEnum 
 from dataclasses import dataclass
 
+
 EMBARGOED_DATE_START = pd.Timestamp('2025-01-01', tz='UTC+05:30')
 
-BRONZE_DIR = 'data/historical/bronze'
+AUDIT_DIR = Path('data/audit/')
+""" Directory for audit data (log returns, histograms, etc.)."""
+
+BRONZE_DIR = Path('data/historical/bronze')
 """ Directory for bronze historical data (raw + candle features)."""
 
-SILVER_DIR = 'data/historical/silver'
+SILVER_DIR = Path('data/historical/silver')
 """ Directory for silver historical data (with technical indicators and labels)."""
 
 MAX_DAYS_PER_CALL = 100
