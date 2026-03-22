@@ -1,6 +1,8 @@
 __pycache__/
+data/audit/log_returns_stats.json
 utils/__pycache__/
 data/__pycache__/
+data/audit/outliers/
 data/historical/
 data/indices/
 data/wastebin/

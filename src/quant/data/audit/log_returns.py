@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -305,6 +306,7 @@ def plot_histogram(
     audit_dir : Path or None
         Directory to save the figure; defaults to AUDIT_DIR.
     """
+    # make plots with the same scales for every symbol -> -.5 to .5
     audit_dir = audit_dir or Path(AUDIT_DIR)
     audit_dir.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -315,6 +317,7 @@ def plot_histogram(
     ax.grid(True)
     fig.savefig(audit_dir / f"{symbol}_log_returns_histogram.png")
     plt.close(fig)
+
 
 
 # -----------------------------------------------------------------------------
@@ -342,45 +345,31 @@ def load_bronze_data(pth: Path) -> pd.DataFrame:
 
 
 def save_audit_results(
-    df: pd.DataFrame,
-    symbol: str,
-    stats_summary: dict | None,
-    audit_dir: Path | None = None,
+    stats_summary: dict,
+    audit_dir: Path,
 ) -> None:
     """
-    Save per-symbol audit outputs: DataFrame and optional stats.
-
+    Save all audits in a single json
     Parameters
     ----------
     df : pd.DataFrame
         Processed DataFrame (with log_ret, status, etc.).
-    symbol : str
-        Symbol identifier for filenames.
     stats_summary : dict or None
         If provided, can be persisted (e.g. as JSON) alongside the DataFrame.
     audit_dir : Path or None
         Directory to write to; defaults to AUDIT_DIR.
     """
-    audit_dir = Path(audit_dir or AUDIT_DIR) / "rolling_audit "
-    audit_dir.mkdir(parents=True, exist_ok=True)
-    out_path = audit_dir / f"{symbol}_log_returns_audit.pkl"
-    df.to_pickle(out_path)
-    logger.info("Saved audit DataFrame to %s", out_path)
-    if stats_summary is not None:
-        import json
-
-        stats_path = audit_dir / f"{symbol}_log_returns_stats.json"
-        with open(stats_path, "w") as f:
-            json.dump(stats_summary, f, indent=2)
-        logger.info("Saved stats to %s", stats_path)
-
+    stats_path = audit_dir / f"log_returns_stats.json"
+    with open(stats_path, "w") as f:
+        json.dump(stats_summary, f, indent=2)
+    logger.info("Saved stats to %s", stats_path)
 
 def process_symbol(
     df: pd.DataFrame,
     symbol: str,
     config: LogReturnsConfig | None = None,
     price_col: BronzeColumns = BronzeColumns.CLOSE,
-    plot_histogram: bool = False,
+    histogram: bool = False,
     audit_dir: Path | None = None,
 ) -> pd.DataFrame:
     """
@@ -396,7 +385,7 @@ def process_symbol(
         If None, uses default LogReturnsConfig().
     price_col : BronzeColumns
         Price column for log returns.
-    plot_histogram : bool
+    histogram : bool
         Whether to save a histogram.
     audit_dir : Path or None
         Where to save audit outputs; defaults to AUDIT_DIR.
@@ -432,20 +421,24 @@ def process_symbol(
         )
     df.loc[outlier_mask, "status"] = "Outlier"
 
-    if plot_histogram:
+    if histogram:
         plot_histogram(df["log_ret"], symbol, audit_dir=audit_dir)
 
     stats_summary = None
     if validate_data_quality(len(df), symbol, config):
         stats_summary = compute_summary_statistics(df["log_ret"], symbol)
         analyze_global_statistics(stats_summary, config)
+    
+    # Aggregate all symbol results in a dict and then save json with symbol as key 
+    return stats_summary
+    # save_audit_results(df, symbol, stats_summary, audit_dir=audit_dir)
+    # return df
 
-    save_audit_results(df, symbol, stats_summary, audit_dir=audit_dir)
-    return df
 
-
-def main() -> None:
-    """
+def main(
+    plot_hist: bool,
+) -> None:
+    """ 
     Compute log returns for all symbols in the bronze directory and save to the audit directory.
     """
     config = LogReturnsConfig()
@@ -456,6 +449,7 @@ def main() -> None:
         logger.warning("No *day.pkl files found in %s", BRONZE_DIR)
         return
 
+    stats_summary = {}
     for pth in bronze_paths:
         try:
             df = load_bronze_data(pth)
@@ -464,15 +458,31 @@ def main() -> None:
             continue
         for name, group in df.groupby(BronzeColumns.SYMBOL.value):
             try:
-                process_symbol(
+                stats_summary[name] = process_symbol(
                     group,
                     name,
                     config=config,
-                    plot_histogram=False,
+                    histogram=plot_hist,
+                    audit_dir=AUDIT_DIR / "outliers",
                 )
             except Exception as e:
                 logger.exception("Failed to process symbol %s: %s", name, e)
-
+        
+    # save stats_summary unified using save_audit_results 
+    save_audit_results(
+        stats_summary=stats_summary, 
+        audit_dir=AUDIT_DIR,
+    )
 
 if __name__ == "__main__":
-    main()
+    import argparse 
+    # add argument for plotting histogram
+    parser = argparse.ArgumentParser(description="Log returns audit")
+    parser.add_argument(
+        "--histogram",
+        action="store_true",
+        default=False,
+        help="Plot histograms for each symbol",
+    )
+    args = parser.parse_args()
+    main(plot_hist=args.histogram)
