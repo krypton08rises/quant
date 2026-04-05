@@ -30,6 +30,14 @@ class OutlierType(StrEnum):
     VOLUME_PRICE_DISPARITY = "volume_price_disparity"
 
 
+class OutlierRegime(StrEnum):
+    """Cross-sectional label: whether an outlier row aligns with a broad market day."""
+
+    CLEAN = "clean"
+    IDIOSYNCRATIC = "idiosyncratic"
+    SYSTEMATIC = "systematic"
+
+
 @dataclass(frozen=True)
 class LogReturnsConfig:
     """Configuration for log-returns audit: thresholds and constants."""
@@ -45,6 +53,7 @@ class LogReturnsConfig:
     rolling_window: int = 20
     volume_disparity_logreturn_threshold: float = 0.1
     volume_disparity_volume_window: int = 20
+    systematic_outlier_threshold: float = 0.05
 
 
 # -----------------------------------------------------------------------------
@@ -370,6 +379,96 @@ def volume_price_disparity(
 
     # Keep caller's original row order/index alignment.
     return disparity.reindex(df.index)
+
+
+def classify_outlier_regime(
+    all_processed_dfs: list[pd.DataFrame],
+    systematic_threshold: float = 0.05,
+    *,
+    date_col: str = BronzeColumns.DATE.value,
+    symbol_col: str = BronzeColumns.SYMBOL.value,
+    status_col: str = "status",
+) -> pd.DataFrame:
+    """
+    Concatenate per-symbol audit frames and label each row with an ``OutlierRegime``.
+
+    A calendar bucket (normalized date) is **systematic** when the *share of symbols*
+    with at least one outlier that day exceeds ``systematic_threshold`` (e.g. 5%).
+    Outlier rows on those buckets are **systematic**; other outlier rows are
+    **idiosyncratic**. Non-outlier rows are **clean**.
+
+    Uses distinct symbols per day for both numerator and denominator (not raw row counts,
+    which would mis-state intraday data).
+    """
+    if not all_processed_dfs:
+        return pd.DataFrame()
+
+    master_df = pd.concat(all_processed_dfs, ignore_index=True)
+    required = {date_col, symbol_col, status_col}
+    missing = required - set(master_df.columns)
+    if missing:
+        raise ValueError(
+            f"classify_outlier_regime: missing columns {sorted(missing)}"
+        )
+
+    master_df = master_df.copy()
+    master_df["_date_bucket"] = pd.to_datetime(master_df[date_col]).dt.normalize()
+
+    outliers = master_df[master_df[status_col] == "Outlier"]
+    sym_with_outlier = outliers.groupby("_date_bucket")[symbol_col].nunique()
+    sym_active = master_df.groupby("_date_bucket")[symbol_col].nunique()
+    frac = sym_with_outlier / sym_active
+    systematic_buckets = frac[frac > systematic_threshold].index
+
+    master_df["outlier_regime"] = OutlierRegime.CLEAN.value
+    is_out = master_df[status_col] == "Outlier"
+    master_df.loc[is_out, "outlier_regime"] = OutlierRegime.IDIOSYNCRATIC.value
+    master_df.loc[
+        is_out & master_df["_date_bucket"].isin(systematic_buckets),
+        "outlier_regime",
+    ] = OutlierRegime.SYSTEMATIC.value
+
+    master_df.drop(columns=["_date_bucket"], inplace=True)
+    return master_df
+
+
+def summarize_outlier_regime(
+    master_df: pd.DataFrame,
+    systematic_threshold: float,
+) -> dict:
+    """Compact JSON-serializable summary for ``outlier_regime`` labels."""
+    if master_df.empty:
+        return {
+            "systematic_threshold": systematic_threshold,
+            "n_rows_total": 0,
+            "n_outlier_rows": 0,
+            "outlier_rows_by_regime": {},
+            "calendar_buckets_with_systematic_outliers": 0,
+        }
+    out_rows = master_df[master_df["status"] == "Outlier"]
+    by_regime: dict = {}
+    if "outlier_regime" in out_rows.columns and not out_rows.empty:
+        by_regime = out_rows["outlier_regime"].value_counts().astype(int).to_dict()
+
+    date_col = BronzeColumns.DATE.value
+    n_sys_buckets = 0
+    if date_col in master_df.columns and "outlier_regime" in master_df.columns:
+        sys_mask = master_df["outlier_regime"] == OutlierRegime.SYSTEMATIC.value
+        if sys_mask.any():
+            n_sys_buckets = int(
+                pd.to_datetime(master_df.loc[sys_mask, date_col])
+                .dt.normalize()
+                .nunique()
+            )
+    return {
+        "systematic_threshold": systematic_threshold,
+        "n_rows_total": int(len(master_df)),
+        "n_outlier_rows": int(len(out_rows)),
+        "outlier_rows_by_regime": {str(k): int(v) for k, v in by_regime.items()},
+        "calendar_buckets_with_systematic_outliers": n_sys_buckets,
+    }
+
+
 # -----------------------------------------------------------------------------
 # Visualization
 # -----------------------------------------------------------------------------
@@ -462,7 +561,7 @@ def process_symbol(
     histogram: bool = False,
     audit_dir: Path | None = None,
     interval: Interval = Interval.DAY,
-) -> dict:
+) -> tuple[dict, pd.DataFrame | None]:
     """
     Run the full log-returns audit pipeline for one symbol.
 
@@ -485,9 +584,9 @@ def process_symbol(
 
     Returns
     -------
-    dict
-        Serializable summary: symbol, interval, outlier counts by `OutlierType`, optional
-        global stats from `compute_summary_statistics` when sample size passes validation.
+    tuple[dict, pd.DataFrame | None]
+        Summary dict for JSON aggregation, and the enriched per-symbol frame (or None if
+        skipped) for `classify_outlier_regime` across the universe.
     """
     config = config or LogReturnsConfig()
     audit_dir = Path(audit_dir or AUDIT_DIR)
@@ -498,24 +597,30 @@ def process_symbol(
 
     if df.empty:
         logger.warning("No valid log returns for symbol %s", symbol)
-        return {
-            "symbol": symbol,
-            "interval": interval.value,
-            "skipped": True,
-            "reason": "no_valid_log_returns",
-        }
+        return (
+            {
+                "symbol": symbol,
+                "interval": interval.value,
+                "skipped": True,
+                "reason": "no_valid_log_returns",
+            },
+            None,
+        )
 
     df["z_score"] = compute_z_scores(df["log_ret"])
     # Drop rows where z_score is NaN (e.g. constant series)
     df = df.dropna(subset=["z_score"]).copy()
     if df.empty:
         logger.warning("No finite z-scores for symbol %s", symbol)
-        return {
-            "symbol": symbol,
-            "interval": interval.value,
-            "skipped": True,
-            "reason": "no_valid_z_scores",
-        }
+        return (
+            {
+                "symbol": symbol,
+                "interval": interval.value,
+                "skipped": True,
+                "reason": "no_valid_z_scores",
+            },
+            None,
+        )
 
     df = compute_rolling_statistics(df, config.rolling_window)
 
@@ -584,7 +689,7 @@ def process_symbol(
         analyze_global_statistics(stats_summary, config)
         result.update(stats_summary)
 
-    return result
+    return result, df
 
 
 def main(
@@ -608,6 +713,7 @@ def main(
         return
 
     stats_summary = {}
+    all_enriched: list[pd.DataFrame] = []
     for pth in bronze_paths:
         try:
             df = load_bronze_data(pth, interval=interval)
@@ -616,7 +722,7 @@ def main(
             continue
         for name, group in df.groupby(BronzeColumns.SYMBOL.value):
             try:
-                stats_summary[name] = process_symbol(
+                summary, enriched = process_symbol(
                     group,
                     name,
                     config=config,
@@ -624,6 +730,9 @@ def main(
                     audit_dir=interval_audit_dir,
                     interval=interval,
                 )
+                stats_summary[name] = summary
+                if enriched is not None:
+                    all_enriched.append(enriched)
             except Exception as e:
                 logger.exception("Failed to process symbol %s: %s", name, e)
         
@@ -632,6 +741,30 @@ def main(
         stats_summary=stats_summary, 
         audit_dir=interval_audit_dir,
     )
+
+    if all_enriched:
+        regime_df = classify_outlier_regime(
+            all_enriched,
+            systematic_threshold=config.systematic_outlier_threshold,
+        )
+        regime_path = interval_audit_dir / "outlier_regime.pkl"
+        regime_df.to_pickle(regime_path)
+        logger.info(
+            "Wrote cross-sectional outlier regime table to %s (%s rows)",
+            regime_path,
+            len(regime_df),
+        )
+        regime_summary_path = interval_audit_dir / "outlier_regime_summary.json"
+        with open(regime_summary_path, "w") as f:
+            json.dump(
+                summarize_outlier_regime(
+                    regime_df,
+                    systematic_threshold=config.systematic_outlier_threshold,
+                ),
+                f,
+                indent=2,
+            )
+        logger.info("Wrote outlier regime summary to %s", regime_summary_path)
 
 if __name__ == "__main__":
     import argparse 
