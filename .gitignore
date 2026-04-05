@@ -1,7 +1,6 @@
 tests/data/
 src/quant/data/audit/plots/
 src/quant/data/audit/rolling_audits/
-/__pycache__/
 /.env
 /.idea/
 /wastebin/
@@ -13,9 +12,10 @@ src/quant/data/audit/rolling_audits/
 /plots/
 /quant/
 /temp/
-/__pycache__/
 /.python-version
 /nse.py
 /results/
 /tft.py
-
+# Global Python cache ignore
+__pycache__/
+*.py[cod]

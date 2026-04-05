@@ -11,3 +11,25 @@ dependencies = []
 [project.readme]
 file = "README.md"
 content-type = "text/markdown"
+
+[tool.black]
+line-length = 100 # Standard is 88, 100 gives more breathing room for long pandas operations
+target-version = ['py310']
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | data
+  | logs
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+select = [
+    "E",  # pycodestyle errors
+    "F",  # pyflakes
+    "I",  # isort (automatically sorts your imports alphabetically and by type)
+    "W",  # pycodestyle warnings
+]
+ignore = ["E501"] # Let black handle line length
