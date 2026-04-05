@@ -766,9 +766,10 @@ def main(
             )
         logger.info("Wrote outlier regime summary to %s", regime_summary_path)
 
-if __name__ == "__main__":
-    import argparse 
-    # add argument for plotting histogram
+def cli() -> None:
+    """CLI entry point for ``python -m quant.data.audit`` and ``python log_returns.py``."""
+    import argparse
+
     parser = argparse.ArgumentParser(description="Log returns audit")
     parser.add_argument(
         "--histogram",
@@ -785,3 +786,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     main(plot_hist=args.histogram, interval=Interval(args.interval))
+
+
+if __name__ == "__main__":
+    cli()
