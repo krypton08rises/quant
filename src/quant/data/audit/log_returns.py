@@ -8,8 +8,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy import stats
+import seaborn as sns 
 
-from quant.data._common import AUDIT_DIR, BRONZE_DIR, BronzeColumns
+from quant.data._common import AUDIT_DIR, BRONZE_DIR, BronzeColumns, Interval
 from quant.data.kite.kite_handler import KiteDataHandler
 from quant.logs.logging import logger
 
@@ -283,14 +284,83 @@ def compute_rolling_statistics(
     )
     return out
 
+def volume_price_disparity(
+    df: pd.DataFrame,
+    symbol: str,
+    *,
+    logret_col: str = "log_ret",
+    volume_col: BronzeColumns = BronzeColumns.VOLUME,
+    logreturn_threshold: float = 0.1,
+    volume_window: int = 20,
+    min_periods: int | None = None,
+) -> pd.Series:
+    """
+    Compute the volatility-price disparity for a symbol.
+    if |logreturn| > .1 check if 20 day avg volume > today's volume
 
+    Returns a boolean mask indexed like `df` where the disparity condition holds.
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The DataFrame containing the log returns and volume data.
+    symbol : str
+        The symbol of the stock.
+    logret_col : str
+        The column name of the log returns.
+    volume_col : BronzeColumns
+        The column name of the volume.
+    logreturn_threshold : float
+        The threshold for the log returns.
+    volume_window : int
+        The window size for the average volume.
+    min_periods : int | None
+        The minimum number of periods to compute the average volume.    
+    Returns
+    -------
+    pd.Series
+        A boolean mask indexed like `df` where the disparity condition holds.   
+    Raises
+    ------
+    ValueError
+        If the input DataFrame does not contain the log returns or volume columns.
+    """
+    if logret_col not in df.columns:
+        raise ValueError(
+            f"Input DataFrame must contain '{logret_col}' (computed log returns)."
+        )
+    if volume_col.value not in df.columns:
+        raise ValueError(
+            f"Input DataFrame must contain '{volume_col.value}' (volume)."
+        )
+
+    out = df.copy()
+    if BronzeColumns.DATE.value in out.columns:
+        out = out.sort_values(BronzeColumns.DATE.value)
+
+    mp = volume_window if min_periods is None else min_periods
+
+    # Use the average of *prior* volumes (shift(1)) so today's volume is compared
+    # against the trailing 20-day mean without look-ahead bias.
+    avg_volume = (
+        out[volume_col.value]
+        .shift(1)
+        .rolling(window=volume_window, min_periods=mp)
+        .mean()
+    )
+
+    disparity = (
+        out[logret_col].abs() > logreturn_threshold
+    ) & (avg_volume > out[volume_col.value])
+
+    # Keep caller's original row order/index alignment.
+    return disparity.reindex(df.index)
 # -----------------------------------------------------------------------------
 # Visualization
 # -----------------------------------------------------------------------------
 
 
 def plot_histogram(
-    log_returns: pd.Series,
+    df: pd.DataFrame,
     symbol: str,
     audit_dir: Path | None = None,
 ) -> None:
@@ -299,25 +369,28 @@ def plot_histogram(
 
     Parameters
     ----------
-    log_returns : pd.Series
-        Log returns to plot.
+    df : pd.DataFrame
+        Must contain a `z_score` column (added by this module).
     symbol : str
         Symbol for title and filename.
     audit_dir : Path or None
         Directory to save the figure; defaults to AUDIT_DIR.
     """
     # make plots with the same scales for every symbol -> -.5 to .5
-    audit_dir = audit_dir or Path(AUDIT_DIR)
+    z_scores = df["z_score"].dropna()
+    audit_dir = Path(audit_dir or AUDIT_DIR) / "histograms"
     audit_dir.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.hist(log_returns.dropna(), bins=50, alpha=0.75)
-    ax.set_title(f"Histogram of Log Returns for {symbol}")
-    ax.set_xlabel("Log Return")
-    ax.set_ylabel("Frequency")
-    ax.grid(True)
-    fig.savefig(audit_dir / f"{symbol}_log_returns_histogram.png")
-    plt.close(fig)
+    plt.figure(figsize=(10, 6))
+    sns.histplot(z_scores, kde=True, stat="density", label="Observed (Z)")
 
+    # Overlay Theoretical Normal for comparison
+    x = np.linspace(-5, 5, 100)
+    plt.plot(x, stats.norm.pdf(x, 0, 1), 'r--', label="Theoretical Normal")
+    plt.xlim(-5, 5) # Fixed scale: 5 standard deviations
+    plt.title(f"Standardized Return Distribution: {symbol}")
+    plt.legend()
+    plt.savefig(audit_dir / f"{symbol}_histogram.png")
+    plt.close()
 
 
 # -----------------------------------------------------------------------------
@@ -325,14 +398,16 @@ def plot_histogram(
 # -----------------------------------------------------------------------------
 
 
-def load_bronze_data(pth: Path) -> pd.DataFrame:
+def load_bronze_data(pth: Path, interval: Interval) -> pd.DataFrame:
     """
     Load a bronze pickle and normalize date column.
 
     Parameters
     ----------
     pth : Path
-        Path to a *day.pkl file.
+        Path to an interval bronze pickle (e.g. `*_day.pkl`, `*_60minute.pkl`).
+    interval : Interval
+        Bronze interval; date normalization is only applied for `Interval.DAY`.
 
     Returns
     -------
@@ -340,7 +415,8 @@ def load_bronze_data(pth: Path) -> pd.DataFrame:
         Loaded DataFrame with date normalized.
     """
     df = KiteDataHandler.load(pth)
-    df[BronzeColumns.DATE.value] = df[BronzeColumns.DATE.value].dt.normalize()
+    if interval == Interval.DAY:
+        df[BronzeColumns.DATE.value] = df[BronzeColumns.DATE.value].dt.normalize()
     return df
 
 
@@ -422,7 +498,7 @@ def process_symbol(
     df.loc[outlier_mask, "status"] = "Outlier"
 
     if histogram:
-        plot_histogram(df["log_ret"], symbol, audit_dir=audit_dir)
+        plot_histogram(df, symbol, audit_dir=audit_dir)
 
     stats_summary = None
     if validate_data_quality(len(df), symbol, config):
@@ -437,22 +513,28 @@ def process_symbol(
 
 def main(
     plot_hist: bool,
+    interval: Interval,
 ) -> None:
     """ 
-    Compute log returns for all symbols in the bronze directory and save to the audit directory.
+    Compute log returns for all symbols for the given interval and save to the audit directory.
     """
     config = LogReturnsConfig()
-    Path(AUDIT_DIR).mkdir(parents=True, exist_ok=True)
+    interval_audit_dir = Path(AUDIT_DIR) / interval.value
+    interval_audit_dir.mkdir(parents=True, exist_ok=True)
 
-    bronze_paths = list(Path(BRONZE_DIR).glob("*day.pkl"))
+    bronze_paths = list(Path(BRONZE_DIR).glob(f"*_{interval.value}.pkl"))
     if not bronze_paths:
-        logger.warning("No *day.pkl files found in %s", BRONZE_DIR)
+        logger.warning(
+            "No bronze files found for interval '%s' in %s",
+            interval.value,
+            BRONZE_DIR,
+        )
         return
 
     stats_summary = {}
     for pth in bronze_paths:
         try:
-            df = load_bronze_data(pth)
+            df = load_bronze_data(pth, interval=interval)
         except Exception as e:
             logger.exception("Failed to load %s: %s", pth, e)
             continue
@@ -463,7 +545,7 @@ def main(
                     name,
                     config=config,
                     histogram=plot_hist,
-                    audit_dir=AUDIT_DIR / "outliers",
+                    audit_dir=interval_audit_dir,
                 )
             except Exception as e:
                 logger.exception("Failed to process symbol %s: %s", name, e)
@@ -471,7 +553,7 @@ def main(
     # save stats_summary unified using save_audit_results 
     save_audit_results(
         stats_summary=stats_summary, 
-        audit_dir=AUDIT_DIR,
+        audit_dir=interval_audit_dir,
     )
 
 if __name__ == "__main__":
@@ -484,5 +566,12 @@ if __name__ == "__main__":
         default=False,
         help="Plot histograms for each symbol",
     )
+    parser.add_argument(
+        "--interval",
+        type=str,
+        default=Interval.DAY.value,
+        choices=[i.value for i in Interval],
+        help="Bronze interval to audit",
+    )
     args = parser.parse_args()
-    main(plot_hist=args.histogram)
+    main(plot_hist=args.histogram, interval=Interval(args.interval))
