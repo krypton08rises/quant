@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -21,6 +22,14 @@ from quant.logs.logging import logger
 STATS_COLS = ["mean", "std_dev", "skew", "kurtosis", "max_draw"]
 
 
+class OutlierType(StrEnum):
+    """Labels for audit outlier flags (pipe-joined on a row when multiple apply)."""
+
+    LOG_RET = "log_ret"
+    Z_SCORE = "z_score"
+    VOLUME_PRICE_DISPARITY = "volume_price_disparity"
+
+
 @dataclass(frozen=True)
 class LogReturnsConfig:
     """Configuration for log-returns audit: thresholds and constants."""
@@ -33,6 +42,9 @@ class LogReturnsConfig:
     kurtosis_high: float = 10.0
     skew_threshold: float = 1.0
     max_draw_warning_threshold: float = -0.10  # warn if worst single-day return < -10%
+    rolling_window: int = 20
+    volume_disparity_logreturn_threshold: float = 0.1
+    volume_disparity_volume_window: int = 20
 
 
 # -----------------------------------------------------------------------------
@@ -88,29 +100,32 @@ def compute_z_scores(log_ret: pd.Series) -> pd.Series:
 # -----------------------------------------------------------------------------
 
 
-def identify_outliers(
-    df: pd.DataFrame,
-    config: LogReturnsConfig,
+def mask_outlier_log_ret(df: pd.DataFrame, config: LogReturnsConfig) -> pd.Series:
+    """True where |log_ret| exceeds the configured threshold."""
+    return df["log_ret"].abs() > config.outlier_log_return_threshold
+
+
+def mask_outlier_z_score(df: pd.DataFrame, config: LogReturnsConfig) -> pd.Series:
+    """True where |z_score| exceeds the configured threshold."""
+    return df["z_score"].abs() > config.outlier_z_score_threshold
+
+
+def build_outlier_types(
+    log_ret_mask: pd.Series,
+    z_score_mask: pd.Series,
+    volume_disparity_mask: pd.Series,
 ) -> pd.Series:
     """
-    Identify outlier rows by absolute log return and z-score thresholds.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Must have columns 'log_ret' and 'z_score'.
-    config : LogReturnsConfig
-        Uses outlier_log_return_threshold and outlier_z_score_threshold.
-
-    Returns
-    -------
-    pd.Series
-        Boolean mask, True where the row is an outlier.
+    Pipe-join active `OutlierType` labels per row (empty string if none).
     """
-    return (
-        (df["log_ret"].abs() > config.outlier_log_return_threshold)
-        | (df["z_score"].abs() > config.outlier_z_score_threshold)
-    )
+    a = log_ret_mask.fillna(False).to_numpy(dtype=bool)
+    b = z_score_mask.fillna(False).to_numpy(dtype=bool)
+    c = volume_disparity_mask.fillna(False).to_numpy(dtype=bool)
+    lr = np.where(a, OutlierType.LOG_RET.value + "|", "")
+    zs = np.where(b, OutlierType.Z_SCORE.value + "|", "")
+    vd = np.where(c, OutlierType.VOLUME_PRICE_DISPARITY.value, "")
+    raw = lr.astype(object) + zs.astype(object) + vd.astype(object)
+    return pd.Series([s.rstrip("|") for s in raw], index=log_ret_mask.index, dtype=object)
 
 
 def validate_data_quality(
@@ -206,6 +221,7 @@ def analyze_global_statistics(
     result: dict = {}
 
     # 1. Mean
+    # Unsure if 0.005 ~ 0.5% mean percent change for an asset is a good threshold.
     mean = stats_summary["mean"]
     result["mean_ok"] = -config.mean_threshold < mean < config.mean_threshold
     if not result["mean_ok"]:
@@ -428,8 +444,6 @@ def save_audit_results(
     Save all audits in a single json
     Parameters
     ----------
-    df : pd.DataFrame
-        Processed DataFrame (with log_ret, status, etc.).
     stats_summary : dict or None
         If provided, can be persisted (e.g. as JSON) alongside the DataFrame.
     audit_dir : Path or None
@@ -447,7 +461,8 @@ def process_symbol(
     price_col: BronzeColumns = BronzeColumns.CLOSE,
     histogram: bool = False,
     audit_dir: Path | None = None,
-) -> pd.DataFrame:
+    interval: Interval = Interval.DAY,
+) -> dict:
     """
     Run the full log-returns audit pipeline for one symbol.
 
@@ -465,11 +480,14 @@ def process_symbol(
         Whether to save a histogram.
     audit_dir : Path or None
         Where to save audit outputs; defaults to AUDIT_DIR.
+    interval : Interval
+        Bronze interval (for logging and JSON metadata).
 
     Returns
     -------
-    pd.DataFrame
-        DataFrame with log_ret, z_score, status (Clean/Outlier), and optionally rolling stats.
+    dict
+        Serializable summary: symbol, interval, outlier counts by `OutlierType`, optional
+        global stats from `compute_summary_statistics` when sample size passes validation.
     """
     config = config or LogReturnsConfig()
     audit_dir = Path(audit_dir or AUDIT_DIR)
@@ -480,35 +498,93 @@ def process_symbol(
 
     if df.empty:
         logger.warning("No valid log returns for symbol %s", symbol)
-        return df
+        return {
+            "symbol": symbol,
+            "interval": interval.value,
+            "skipped": True,
+            "reason": "no_valid_log_returns",
+        }
 
     df["z_score"] = compute_z_scores(df["log_ret"])
     # Drop rows where z_score is NaN (e.g. constant series)
     df = df.dropna(subset=["z_score"]).copy()
+    if df.empty:
+        logger.warning("No finite z-scores for symbol %s", symbol)
+        return {
+            "symbol": symbol,
+            "interval": interval.value,
+            "skipped": True,
+            "reason": "no_valid_z_scores",
+        }
 
-    df["status"] = "Clean"
-    outlier_mask = identify_outliers(df, config)
-    if outlier_mask.any():
-        n_out = outlier_mask.sum()
+    df = compute_rolling_statistics(df, config.rolling_window)
+
+    log_ret_mask = mask_outlier_log_ret(df, config)
+    z_score_mask = mask_outlier_z_score(df, config)
+    volume_disparity_mask = volume_price_disparity(
+        df,
+        symbol,
+        logreturn_threshold=config.volume_disparity_logreturn_threshold,
+        volume_window=config.volume_disparity_volume_window,
+    ).fillna(False)
+
+    df["outlier_types"] = build_outlier_types(
+        log_ret_mask, z_score_mask, volume_disparity_mask
+    )
+    any_outlier = log_ret_mask | z_score_mask | volume_disparity_mask
+    df["status"] = np.where(any_outlier, "Outlier", "Clean")
+
+    outlier_row_counts_by_type = {
+        OutlierType.LOG_RET.value: int(log_ret_mask.sum()),
+        OutlierType.Z_SCORE.value: int(z_score_mask.sum()),
+        OutlierType.VOLUME_PRICE_DISPARITY.value: int(volume_disparity_mask.sum()),
+    }
+    result: dict = {
+        "symbol": symbol,
+        "interval": interval.value,
+        "outlier_row_counts_by_type": outlier_row_counts_by_type,
+        "rows_with_any_outlier": int(any_outlier.sum()),
+    }
+
+    if log_ret_mask.any():
         logger.warning(
-            "Symbol: %s has %s outliers based on log returns.",
+            "Symbol %s [%s]: %s rows flagged as %s (|log_ret| > %s)",
             symbol,
-            n_out,
+            interval.value,
+            int(log_ret_mask.sum()),
+            OutlierType.LOG_RET.value,
+            config.outlier_log_return_threshold,
         )
-    df.loc[outlier_mask, "status"] = "Outlier"
+    if z_score_mask.any():
+        logger.warning(
+            "Symbol %s [%s]: %s rows flagged as %s (|z_score| > %s)",
+            symbol,
+            interval.value,
+            int(z_score_mask.sum()),
+            OutlierType.Z_SCORE.value,
+            config.outlier_z_score_threshold,
+        )
+    if volume_disparity_mask.any():
+        logger.warning(
+            "Symbol %s [%s]: %s rows flagged as %s (|log_ret| > %s and "
+            "trailing %s-bar avg volume > bar volume)",
+            symbol,
+            interval.value,
+            int(volume_disparity_mask.sum()),
+            OutlierType.VOLUME_PRICE_DISPARITY.value,
+            config.volume_disparity_logreturn_threshold,
+            config.volume_disparity_volume_window,
+        )
 
     if histogram:
         plot_histogram(df, symbol, audit_dir=audit_dir)
 
-    stats_summary = None
     if validate_data_quality(len(df), symbol, config):
         stats_summary = compute_summary_statistics(df["log_ret"], symbol)
         analyze_global_statistics(stats_summary, config)
-    
-    # Aggregate all symbol results in a dict and then save json with symbol as key 
-    return stats_summary
-    # save_audit_results(df, symbol, stats_summary, audit_dir=audit_dir)
-    # return df
+        result.update(stats_summary)
+
+    return result
 
 
 def main(
@@ -546,6 +622,7 @@ def main(
                     config=config,
                     histogram=plot_hist,
                     audit_dir=interval_audit_dir,
+                    interval=interval,
                 )
             except Exception as e:
                 logger.exception("Failed to process symbol %s: %s", name, e)

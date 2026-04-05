@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 EMBARGOED_DATE_START = pd.Timestamp('2025-01-01', tz='UTC+05:30')
 
-AUDIT_DIR = Path('data/audit/')
+AUDIT_DIR = Path('data/audit/analysis/')
 """ Directory for audit data (log returns, histograms, etc.)."""
 
 BRONZE_DIR = Path('data/historical/bronze')
