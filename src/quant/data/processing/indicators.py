@@ -1,8 +1,10 @@
-import numpy as np
-import pandas as pd
 from typing import Tuple
 
+import numpy as np
+import pandas as pd
+
 from .._common import SilverColumns
+
 
 def ema(series: pd.Series, span: int) -> pd.Series:
     """
@@ -46,16 +48,16 @@ def rsi_wilder(series: pd.Series, period: int = 14) -> pd.Series:
     loss = -diff.clip(upper=0)
 
     # Wilder's smoothing
-    avg_gain = gain.ewm(alpha=1/period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1/period, adjust=False).mean()
+    avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
     rs = avg_gain / (avg_loss.replace(0, np.nan))
     rsi = 100 - (100 / (1 + rs))
     return rsi.fillna(50)
 
 
-
-
-def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[pd.Series, pd.Series, pd.Series]:
+def macd(
+    series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9
+) -> Tuple[pd.Series, pd.Series, pd.Series]:
     """
     Compute the Moving Average Convergence Divergence (MACD) of a pandas Series.
     Formula:
@@ -64,7 +66,7 @@ def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> 
         Histogram = MACD Line - Signal Line
 
     Arguments
-    --------- 
+    ---------
     series: pd.Series
         The input time series of closing prices.
     fast: int
@@ -84,8 +86,9 @@ def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> 
     return macd_line, signal_line, hist
 
 
-
-def bollinger(series: pd.Series, window: int = 20, k: float = 2.0) -> Tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
+def bollinger(
+    series: pd.Series, window: int = 20, k: float = 2.0
+) -> Tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
     """
     Compute the Bollinger Bands for a pandas Series.
     Formula:
@@ -136,12 +139,10 @@ def atr(high: pd.Series, low: pd.Series, prev_close: pd.Series, period: int = 14
     pd.Series
         The ATR of the input series.
     """
-    tr = pd.concat([
-        (high - low),
-        (high - prev_close).abs(),
-        (low - prev_close).abs()
-    ], axis=1).max(axis=1)
-    return tr.ewm(alpha=1/period, adjust=False).mean()
+    tr = pd.concat([(high - low), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(
+        axis=1
+    )
+    return tr.ewm(alpha=1 / period, adjust=False).mean()
 
 
 def generate_indicators_from_df(
@@ -167,7 +168,7 @@ def generate_indicators_from_df(
 
     df[SilverColumns.RSI] = rsi_wilder(df[tag])
     macd_line, signal_line, hist = macd(df[tag])
-    df[SilverColumns.MACD_LINE  ] = macd_line
+    df[SilverColumns.MACD_LINE] = macd_line
     df[SilverColumns.MACD_SIGNAL] = signal_line
     df[SilverColumns.MACD_HIST] = hist
     mid, upper, lower, pct = bollinger(df[tag])
@@ -177,10 +178,10 @@ def generate_indicators_from_df(
     df[SilverColumns.BB_PCT] = pct
 
     df[SilverColumns.ATR] = atr(
-        high=df['high'],  # Using close prices as a proxy for high/low for simplicity
-        low=df['low'],
+        high=df["high"],  # Using close prices as a proxy for high/low for simplicity
+        low=df["low"],
         prev_close=df[tag].shift(1),
-        period=14
+        period=14,
     )
 
     return df

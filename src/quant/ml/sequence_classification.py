@@ -1,18 +1,17 @@
 """
-This script is for classifying time series data using a sequence classification model. 
+This script is for classifying time series data using a sequence classification model.
 """
 
 
-import torch 
-import numpy as np
-
 from pathlib import Path
+
+import numpy as np
+from sklearn.metrics import classification_report
+from sklearn.model_selection import train_test_split
+from xgboost import XGBClassifier
+
 from data.create_labels import StreamConfig, stream_sequence_windows
 
-from sklearn.ensemble import RandomForestClassifier
-from xgboost import XGBClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report
 
 def xgboost(X_train, y_train, X_test, y_test):
     xgb = XGBClassifier(
@@ -23,20 +22,22 @@ def xgboost(X_train, y_train, X_test, y_test):
         colsample_bytree=0.8,
         tree_method="hist",
         random_state=42,
-        n_jobs=-1
+        n_jobs=-1,
     )
     xgb.fit(X_train, y_train)
     print("\nXGBoost Results:")
     print(classification_report(y_test, xgb.predict(X_test)))
 
+
 def cnn():
+    pass
 
 
-def load_data(cfg:StreamConfig):
+def load_data(cfg: StreamConfig):
     # Collect some samples (adjust n_samples to taste)
     X, y = [], []
     it = stream_sequence_windows(cfg)
-    n_samples = 5000   # you can make this larger, depends on memory
+    n_samples = 5000  # you can make this larger, depends on memory
 
     for i, sample in zip(range(n_samples), it):
         X.append(sample["x"].flatten())  # [L, D] -> [L*D]
@@ -54,12 +55,8 @@ def load_data(cfg:StreamConfig):
     )
     return X_train, X_test, y_train, y_test
 
-def main() :
-    cfg = StreamConfig(
-        folder_path=Path("data/historical"),
-        window_len=30,
-        horizon=1,
-        balance=True
-    )
+
+def main():
+    cfg = StreamConfig(folder_path=Path("data/historical"), window_len=30, horizon=1, balance=True)
     X_train, X_test, y_train, y_test = load_data(cfg)
     xgboost(X_train, y_train, X_test, y_test)

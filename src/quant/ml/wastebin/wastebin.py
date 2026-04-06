@@ -1,10 +1,15 @@
-    
-
 class MLP(nn.Module):
     """
     Multi-layer perceptron (MLP) model.
     """
-    def __init__(self, in_dim: int, n_classes: int = 3, hidden: tuple[int, ...] = HIDDEN_LAYERS, pdrop: float = 0.1):
+
+    def __init__(
+        self,
+        in_dim: int,
+        n_classes: int = 3,
+        hidden: tuple[int, ...] = HIDDEN_LAYERS,
+        pdrop: float = 0.1,
+    ):
         super().__init__()
         layers = []
         last = in_dim
@@ -22,8 +27,16 @@ class MLPWithSymbol(nn.Module):
     """
     Multi-layer perceptron (MLP) model with symbol embeddings.
     """
-    def __init__(self, in_dim: int, n_symbols: int, emb_dim: int = 16, n_classes: int = 3,
-                 hidden: tuple[int, ...] = (256, 128, 64), pdrop: float = 0.1):
+
+    def __init__(
+        self,
+        in_dim: int,
+        n_symbols: int,
+        emb_dim: int = 16,
+        n_classes: int = 3,
+        hidden: tuple[int, ...] = (256, 128, 64),
+        pdrop: float = 0.1,
+    ):
         super().__init__()
         self.emb = nn.Embedding(num_embeddings=n_symbols, embedding_dim=emb_dim)
         self.mlp = MLP(in_dim + emb_dim, n_classes=n_classes, hidden=hidden, pdrop=pdrop)
@@ -32,7 +45,6 @@ class MLPWithSymbol(nn.Module):
         e = self.emb(sym_id)
         z = torch.cat([x_num, e], dim=1)
         return self.mlp(z)
-
 
 
 def main(args):
@@ -44,11 +56,11 @@ def main(args):
         ds.set_norm(mean, std)
 
     # Loaders
-    kwargs = dict(batch_size=args.batch_size, num_workers=2, pin_memory=(device.type=="cuda"))
+    kwargs = dict(batch_size=args.batch_size, num_workers=2, pin_memory=(device.type == "cuda"))
     if args.use_emb:
-        collate = None  # default works since each __getitem__ returns (x_num, sym_id, y)
+        pass  # default works since each __getitem__ returns (x_num, sym_id, y)
     else:
-        collate = None
+        pass
     tr_ld = DataLoader(tr_ds, shuffle=True, **kwargs)
     va_ld = DataLoader(va_ds, shuffle=False, **kwargs)
     te_ld = DataLoader(te_ds, shuffle=False, **kwargs)
@@ -58,15 +70,28 @@ def main(args):
 
     # Model
     if args.use_emb:
-        model = MLPWithSymbol(in_dim=len(numeric_cols), n_symbols=len(sym2id), emb_dim=args.emb_dim,
-                              n_classes=3, hidden=(args.h1, args.h2, args.h3), pdrop=args.dropout)
+        model = MLPWithSymbol(
+            in_dim=len(numeric_cols),
+            n_symbols=len(sym2id),
+            emb_dim=args.emb_dim,
+            n_classes=3,
+            hidden=(args.h1, args.h2, args.h3),
+            pdrop=args.dropout,
+        )
         use_emb = True
     else:
-        model = MLP(in_dim=len(numeric_cols), n_classes=3, hidden=(args.h1, args.h2, args.h3), pdrop=args.dropout)
+        model = MLP(
+            in_dim=len(numeric_cols),
+            n_classes=3,
+            hidden=(args.h1, args.h2, args.h3),
+            pdrop=args.dropout,
+        )
         use_emb = False
 
     # Train
-    model = train_loop(model, tr_ld, va_ld, device, class_weights, epochs=args.epochs, lr=args.lr, use_emb=use_emb)
+    model = train_loop(
+        model, tr_ld, va_ld, device, class_weights, epochs=args.epochs, lr=args.lr, use_emb=use_emb
+    )
 
     # Evaluate on TEST
     macro_f1, y_true, y_pred = evaluate(model, te_ld, device, use_emb)
@@ -77,14 +102,16 @@ def main(args):
     # Save
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    torch.save({
-        "state_dict": model.state_dict(),
-        "use_emb": use_emb,
-        "sym2id": sym2id,
-        "numeric_cols": numeric_cols,
-        "mean": mean,
-        "std": std,
-        "args": vars(args),
-    }, out_dir / "model.pt")
+    torch.save(
+        {
+            "state_dict": model.state_dict(),
+            "use_emb": use_emb,
+            "sym2id": sym2id,
+            "numeric_cols": numeric_cols,
+            "mean": mean,
+            "std": std,
+            "args": vars(args),
+        },
+        out_dir / "model.pt",
+    )
     print(f"Saved model to {out_dir / 'model.pt'}")
-

@@ -1,29 +1,22 @@
-import os
 import json
 import logging
+import os
 import time
-from pathlib import Path
 from datetime import date, timedelta
+from pathlib import Path
 
-from dataclasses import dataclass
-from typing import Tuple
-import pandas as pd
-import numpy as np
-from kiteconnect import KiteConnect
 import dill
-
-from kiteconnect.exceptions import TokenException
-from pydantic import BaseModel, PrivateAttr
-from .._common import INTERVAL_LOOKBACK, MAX_DAYS_PER_CALL
-# Configure logging
-timestamp = date.today().isoformat()
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
-logger = logging.getLogger(__name__)
-
+import numpy as np
+import pandas as pd
 from dotenv import load_dotenv
+from kiteconnect import KiteConnect
+from kiteconnect.exceptions import TokenException
+
+from .._common import INTERVAL_LOOKBACK, MAX_DAYS_PER_CALL
+
 load_dotenv()
 
-
+# Configure logging
 timestamp = date.today().isoformat()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -40,8 +33,8 @@ class KiteDataHandler:
         token_path: Path = Path("access_token.json"),
         inst_csv: Path = Path("data/historical/kite_nse_instruments.csv"),
         max_retries: int = 3,
-        retry_delay: int = 1,   
-        data: pd.DataFrame | None = None
+        retry_delay: int = 1,
+        data: pd.DataFrame | None = None,
     ):
         try:
             self.kite = self._get_kite_session(api_key, token_path)
@@ -66,7 +59,7 @@ class KiteDataHandler:
         kite : KiteConnect
             Authenticated Kite Connect session.
         """
-        with open(token_path, 'r') as f:
+        with open(token_path, "r") as f:
             session = json.load(f)
         api_key = api_key or os.getenv("ZERODHA_API_KEY")
         kite = KiteConnect(api_key=api_key)
@@ -89,16 +82,14 @@ class KiteDataHandler:
         """
 
         df = pd.read_csv(path)
-        df = df[(df.instrument_type == 'EQ') & (df.exchange == 'NSE')]
+        df = df[(df.instrument_type == "EQ") & (df.exchange == "NSE")]
         mapping = dict(zip(df.tradingsymbol, df.instrument_token))
         logger.info(f"Loaded {len(mapping)} NSE instruments")
         return mapping
 
-    async def fetch_historical(self,
-                         symbols: list,
-                         interval: str = 'day',
-                         start: date = None,
-                         end: date = None) -> pd.DataFrame:
+    async def fetch_historical(
+        self, symbols: list, interval: str = "day", start: date = None, end: date = None
+    ) -> pd.DataFrame:
         """
         Fetch historical data for symbols between start and end using chunking.
         ToDo: Batched async requests for multiple chunks and symbols.
@@ -120,25 +111,25 @@ class KiteDataHandler:
         end = end or date.today()
         start = start or (end - timedelta(days=INTERVAL_LOOKBACK.get(interval, 365)))
         frames = []
-        logger.info(f"Fetching historical data for {len(symbols)} symbols from {start} to {end} with interval '{interval}'")
+        logger.info(
+            f"Fetching historical data for {len(symbols)} symbols from {start} to {end} with interval '{interval}'"
+        )
 
         for sym in symbols:
-
-            # Get instrument token for api request 
+            # Get instrument token for api request
             token = self.instrument_map.get(sym)
             if not token:
                 logger.warning(f"No token for {sym}")
                 continue
 
-            
             # chunk dates
             chunk_start = start
-            while chunk_start <= end:    
+            while chunk_start <= end:
                 chunk_end = min(chunk_start + timedelta(days=MAX_DAYS_PER_CALL - 1), end)
                 logger.info(f"Fetching {sym} {interval} from {chunk_start} to {chunk_end}")
                 data = None
 
-                # Simple retry logic with exponential backoff 
+                # Simple retry logic with exponential backoff
                 for i in range(1, self.max_retries + 1):
                     try:
                         # can I do batched async requests here? Historical_data seems sync only
@@ -147,24 +138,24 @@ class KiteDataHandler:
                             from_date=chunk_start,
                             to_date=chunk_end,
                             interval=interval,
-                            continuous=False
+                            continuous=False,
                         )
                         break
                     except Exception as e:
                         logger.warning(f"Attempt {i} failed: {e}")
                         if i < self.max_retries:
-                            time.sleep(self.retry_delay * 2**(i-1))
+                            time.sleep(self.retry_delay * 2 ** (i - 1))
                 if not data:
                     logger.error(f"Failed to fetch {sym} chunk {chunk_start} to {chunk_end}")
                     chunk_start = chunk_end + timedelta(days=1)
                     continue
 
                 # convert to DataFrame - remember this is per symbol per chunk at this
-                df = pd.DataFrame(data) 
+                df = pd.DataFrame(data)
                 if df.empty:
                     logger.info(f"No data for chunk {chunk_start} to {chunk_end}")
                 else:
-                    df['symbol'] = sym
+                    df["symbol"] = sym
                     frames.append(df)
 
                 chunk_start = chunk_end + timedelta(days=1)
@@ -172,7 +163,7 @@ class KiteDataHandler:
         # concatenate all frames for all chunks and symbols
         if frames:
             full_df = pd.concat(frames, ignore_index=True)
-            full_df.sort_values(by=['symbol', 'date'], inplace=True)
+            full_df.sort_values(by=["symbol", "date"], inplace=True)
 
             full_df = self._generate_features(full_df)
             # full_df = self._normalize(full_df)
@@ -183,30 +174,31 @@ class KiteDataHandler:
 
     @staticmethod
     def _generate_features(df: pd.DataFrame) -> pd.DataFrame:
-        df['upper_shadow'] = df['high'] - df[['open', 'close']].max(axis=1)
-        df['lower_shadow'] = df[['open', 'close']].min(axis=1) - df['low']
-        df['tick_body'] = (df['open'] - df['close']) #.abs() -- DO NOT USE ABSOLUTE; wouldn't make sense to only have positives --
-        df['diff'] = df['close'].diff()
-        df['shifted_close'] = df['close'].shift(1)
-        df['percent_change'] = (df['diff'] * 100 / df['shifted_close'].replace(0, np.nan)).fillna(0)
-        df['classification_marker'] = df['percent_change'].astype(int)
+        df["upper_shadow"] = df["high"] - df[["open", "close"]].max(axis=1)
+        df["lower_shadow"] = df[["open", "close"]].min(axis=1) - df["low"]
+        df["tick_body"] = (
+            df["open"] - df["close"]
+        )  # .abs() -- DO NOT USE ABSOLUTE; wouldn't make sense to only have positives --
+        df["diff"] = df["close"].diff()
+        df["shifted_close"] = df["close"].shift(1)
+        df["percent_change"] = (df["diff"] * 100 / df["shifted_close"].replace(0, np.nan)).fillna(0)
+        df["classification_marker"] = df["percent_change"].astype(int)
         return df
-
 
     def save(self, file_path: Path):
         if self.data is None:
             raise ValueError("No data to save.")
         file_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info(f"Saving data+metadata to {file_path.with_suffix('.pkl')}")
-        payload = {'data': self.data}
-        with open(file_path.with_suffix('.pkl'), 'wb') as f:
+        payload = {"data": self.data}
+        with open(file_path.with_suffix(".pkl"), "wb") as f:
             dill.dump(payload, f)
         logger.info(f"Saved data+metadata to {file_path.with_suffix('.pkl')}")
 
     @classmethod
     def load(cls, file_path: Path):
-        with open(file_path.with_suffix('.pkl'), 'rb') as f:
+        with open(file_path.with_suffix(".pkl"), "rb") as f:
             payload = dill.load(f)
-        data = payload.get('data')
+        data = payload.get("data")
         logger.info(f"Loaded data+metadata from {file_path.with_suffix('.pkl')}")
         return data

@@ -1,21 +1,21 @@
-""" 
+"""
 Dataset class that streams gold dataset from "data/historical/gold" and passes on to iterable dataloader objects.
 """
-import os 
-import random 
-import pandas as pd
+import os
+import random
+from typing import Any, Generator
 
 import numpy as np
+import pandas as pd
 import torch
 from torch.utils.data import IterableDataset
-from typing import Generator, Any
 
-from ._common import EXCLUDE_COLS, TARGET_COL, NUM_COLS
-
-from ._common import GOLD_DIR
-from .config import SeqClassDataConfig
 from ..logs.logging import logger
-# make class 
+from ._common import EXCLUDE_COLS, NUM_COLS, TARGET_COL
+from .config import SeqClassDataConfig
+
+# make class
+
 
 class SeqClassificationDataset(IterableDataset):
     def __init__(
@@ -42,10 +42,9 @@ class SeqClassificationDataset(IterableDataset):
 
         # optional params
         self.stride = getattr(config, "stride", 1)  # how far to move window each time
-        self.num_classes = config.num_classes       # assume 3
+        self.num_classes = config.num_classes  # assume 3
         self.balance_classes = getattr(config, "balance_classes", False)
         self._stock_cache: dict[str, dict[str, Any]] = {}
-
 
     def _prepare_stock(self, filename: str, rnd: random.Random) -> dict:
         if filename in self._stock_cache:
@@ -86,8 +85,6 @@ class SeqClassificationDataset(IterableDataset):
         self._stock_cache[filename] = cache_entry
         return cache_entry
 
-
-    
     def _normalize(self, x: torch.Tensor) -> torch.Tensor:
         """
         Normalize features.
@@ -102,15 +99,15 @@ class SeqClassificationDataset(IterableDataset):
         torch.Tensor
             Normalized tensor with same shape as x.
         """
-        # estimate mean and std from data column wise 
-        
+        # estimate mean and std from data column wise
+
         data_np = x.numpy()
-        _mu = torch.from_numpy(np.mean(data_np, axis=0)).float()      
-        _sigma = torch.from_numpy(np.std(data_np, axis=0)).float()    
+        _mu = torch.from_numpy(np.mean(data_np, axis=0)).float()
+        _sigma = torch.from_numpy(np.std(data_np, axis=0)).float()
 
         # to avoid division by zero
         _sigma[_sigma == 0] = 1.0
-    
+
         # If x is (seq_len, num_features)
         if x.ndim == 2 and x.shape[-1] == _mu.shape[0]:
             return (x - _mu) / _sigma  # broadcast over seq_len
@@ -120,11 +117,8 @@ class SeqClassificationDataset(IterableDataset):
 
         # If x is just (num_features,)
         if x.ndim == 1 and x.shape[0] == _mu.shape[0]:
-            return (x - _mu) / _sigma   
+            return (x - _mu) / _sigma
         raise ValueError(f"Unexpected feature shape {x.shape} for normalization")
-
-
-
 
     def __iter__(self) -> Generator:
         """
@@ -143,24 +137,26 @@ class SeqClassificationDataset(IterableDataset):
             rnd = random.Random(self.seed)
 
         filepaths = self.filepaths[:]  # local copy
-        rnd.shuffle(filepaths)        
-        
-        # Need to add recursive loading here - if i load yahoofinance 1day in the first iteration, I want to load it again after all files are processed; since the input length of training is very small compared to 10 years worth of data; it makes sense to loop over files multiple times per epoch; the  training_track dataframe will keep track to ensure 
+        rnd.shuffle(filepaths)
+
+        # Need to add recursive loading here - if i load yahoofinance 1day in the first iteration, I want to load it again after all files are processed; since the input length of training is very small compared to 10 years worth of data; it makes sense to loop over files multiple times per epoch; the  training_track dataframe will keep track to ensure
         for filename in self.filepaths:
             cache_entry = self._prepare_stock(filename, rnd)
             if not cache_entry.get("valid", False):
                 continue
 
-            feat_np = cache_entry["feat_np"]           # (T, num_features)
-            labels_np = cache_entry["labels_np"]       # (T,)
-            dates = cache_entry["dates"]               # (T,)
+            feat_np = cache_entry["feat_np"]  # (T, num_features)
+            labels_np = cache_entry["labels_np"]  # (T,)
+            dates = cache_entry["dates"]  # (T,)
             indices_by_label = cache_entry["indices_by_label"]
 
             symbol = filename.split("_")[0]
             sym_id_val = self.sym2id[symbol]
 
             # --- balanced sampling if all three classes exist ---
-            have_all = all(c in indices_by_label and len(indices_by_label[c]) > 0 for c in (0, 1, 2))
+            have_all = all(
+                c in indices_by_label and len(indices_by_label[c]) > 0 for c in (0, 1, 2)
+            )
             if self.train and have_all:
                 # equalize class counts per stock
                 min_count = min(len(indices_by_label[c]) for c in (0, 1, 2))
@@ -171,27 +167,31 @@ class SeqClassificationDataset(IterableDataset):
                 # interleave 0,1,2, 0,1,2, ...
                 for i in range(min_count):
                     for c in (0, 1, 2):
-                        label_idx = indices_by_label[c][i]          # index of "tomorrow"
-                        start_idx = label_idx - self.input_length   # window starts self.input_length days before
-                        end_idx = label_idx                         # exclusive
+                        label_idx = indices_by_label[c][i]  # index of "tomorrow"
+                        start_idx = (
+                            label_idx - self.input_length
+                        )  # window starts self.input_length days before
+                        end_idx = label_idx  # exclusive
 
                         if start_idx < 0:
                             continue  # should not happen due to filtering, but safe
 
                         assert end_idx > start_idx, "end_idx must be greater than start_idx"
 
-                        window = feat_np[start_idx:end_idx]         # (seq_len, num_features)
-                        x_num = torch.from_numpy(window)            # float32
+                        window = feat_np[start_idx:end_idx]  # (seq_len, num_features)
+                        x_num = torch.from_numpy(window)  # float32
                         x_num = self._normalize(x_num)
                         sym_tensor = torch.tensor(sym_id_val, dtype=torch.long)
                         y_tensor = torch.tensor(c, dtype=torch.long)
 
-                        self.training_artifacts.append([
-                            symbol,
-                            dates[start_idx],
-                            dates[end_idx - 1],  # last day of input window
-                            c,                   # target label (tomorrow)
-                        ])
+                        self.training_artifacts.append(
+                            [
+                                symbol,
+                                dates[start_idx],
+                                dates[end_idx - 1],  # last day of input window
+                                c,  # target label (tomorrow)
+                            ]
+                        )
 
                         yield {
                             "features": x_num,
@@ -201,9 +201,7 @@ class SeqClassificationDataset(IterableDataset):
 
             else:
                 # fallback: iterate over all valid label_idx (unbalanced)
-                valid_label_indices = [
-                    idx for idx in range(self.input_length, len(labels_np))
-                ]
+                valid_label_indices = [idx for idx in range(self.input_length, len(labels_np))]
                 rnd.shuffle(valid_label_indices)
 
                 for label_idx in valid_label_indices:
@@ -219,12 +217,14 @@ class SeqClassificationDataset(IterableDataset):
                     sym_tensor = torch.tensor(sym_id_val, dtype=torch.long)
                     y_tensor = torch.tensor(label_val, dtype=torch.long)
 
-                    self.training_artifacts.append([
-                        symbol,
-                        dates[start_idx],
-                        dates[end_idx - 1],
-                        label_val,
-                    ])
+                    self.training_artifacts.append(
+                        [
+                            symbol,
+                            dates[start_idx],
+                            dates[end_idx - 1],
+                            label_val,
+                        ]
+                    )
 
                     yield {
                         "features": x_num,
@@ -232,15 +232,11 @@ class SeqClassificationDataset(IterableDataset):
                         "target": y_tensor,
                     }
 
-
     def __end__(self):
         pd.DataFrame(
-            self.training_artifacts, columns=["symbol", "start_date", "end_date", "label"]).to_csv("training_artifacts.csv", index=False
-            )   
-        logger.info("Saved training artifacts to training_artifacts.csv")   
-        
-
-
+            self.training_artifacts, columns=["symbol", "start_date", "end_date", "label"]
+        ).to_csv("training_artifacts.csv", index=False)
+        logger.info("Saved training artifacts to training_artifacts.csv")
 
     def build_feature_space(df: pd.DataFrame):
         """
@@ -260,14 +256,17 @@ class SeqClassificationDataset(IterableDataset):
         sym_col = "symbol"
         # numeric features = all float-like columns except excludes and target
         numeric_cols = [
-            c for c in df.columns 
-            if c not in EXCLUDE_COLS | {target_col, sym_col} and pd.api.types.is_numeric_dtype(df[c])
+            c
+            for c in df.columns
+            if c not in EXCLUDE_COLS | {target_col, sym_col}
+            and pd.api.types.is_numeric_dtype(df[c])
         ]
         return target_col, sym_col, numeric_cols
 
-
-    def check_overlap(self, ): 
+    def check_overlap(
+        self,
+    ):
         """
         Basically loops over the iterator and checks if same date range is repeated across the same symbol+interval pair
         """
-        pass 
+        pass
