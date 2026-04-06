@@ -8,12 +8,11 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy import stats
-import seaborn as sns 
-
+import seaborn as sns
 from quant.data._common import AUDIT_DIR, BRONZE_DIR, BronzeColumns, Interval
 from quant.data.kite.kite_handler import KiteDataHandler
 from quant.logs.logging import logger
+from scipy import stats
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -81,9 +80,7 @@ def compute_log_returns(
         Copy of the DataFrame with a new 'log_ret' column; rows with NaN log_ret are kept.
     """
     out = df.sort_values(BronzeColumns.DATE.value).copy()
-    out["log_ret"] = np.log(
-        out[price_col.value] / out[price_col.value].shift(1)
-    )
+    out["log_ret"] = np.log(out[price_col.value] / out[price_col.value].shift(1))
     return out
 
 
@@ -294,20 +291,15 @@ def compute_rolling_statistics(
         Copy of the DataFrame with window_mean, window_std_dev, window_skew, window_kurtosis.
     """
     if "log_ret" not in df.columns:
-        raise ValueError(
-            "Input DataFrame must have a 'log_ret' column containing log returns."
-        )
+        raise ValueError("Input DataFrame must have a 'log_ret' column containing log returns.")
     out = df.copy()
-    r = out["log_ret"].rolling(
-        window=analysis_window, min_periods=analysis_window
-    )
+    r = out["log_ret"].rolling(window=analysis_window, min_periods=analysis_window)
     out["window_mean"] = r.mean()
     out["window_std_dev"] = r.std()
     out["window_skew"] = r.apply(lambda x: stats.skew(x, bias=False), raw=True)
-    out["window_kurtosis"] = r.apply(
-        lambda x: stats.kurtosis(x, bias=False), raw=True
-    )
+    out["window_kurtosis"] = r.apply(lambda x: stats.kurtosis(x, bias=False), raw=True)
     return out
+
 
 def volume_price_disparity(
     df: pd.DataFrame,
@@ -339,24 +331,20 @@ def volume_price_disparity(
     volume_window : int
         The window size for the average volume.
     min_periods : int | None
-        The minimum number of periods to compute the average volume.    
+        The minimum number of periods to compute the average volume.
     Returns
     -------
     pd.Series
-        A boolean mask indexed like `df` where the disparity condition holds.   
+        A boolean mask indexed like `df` where the disparity condition holds.
     Raises
     ------
     ValueError
         If the input DataFrame does not contain the log returns or volume columns.
     """
     if logret_col not in df.columns:
-        raise ValueError(
-            f"Input DataFrame must contain '{logret_col}' (computed log returns)."
-        )
+        raise ValueError(f"Input DataFrame must contain '{logret_col}' (computed log returns).")
     if volume_col.value not in df.columns:
-        raise ValueError(
-            f"Input DataFrame must contain '{volume_col.value}' (volume)."
-        )
+        raise ValueError(f"Input DataFrame must contain '{volume_col.value}' (volume).")
 
     out = df.copy()
     if BronzeColumns.DATE.value in out.columns:
@@ -366,16 +354,9 @@ def volume_price_disparity(
 
     # Use the average of *prior* volumes (shift(1)) so today's volume is compared
     # against the trailing 20-day mean without look-ahead bias.
-    avg_volume = (
-        out[volume_col.value]
-        .shift(1)
-        .rolling(window=volume_window, min_periods=mp)
-        .mean()
-    )
+    avg_volume = out[volume_col.value].shift(1).rolling(window=volume_window, min_periods=mp).mean()
 
-    disparity = (
-        out[logret_col].abs() > logreturn_threshold
-    ) & (avg_volume > out[volume_col.value])
+    disparity = (out[logret_col].abs() > logreturn_threshold) & (avg_volume > out[volume_col.value])
 
     # Keep caller's original row order/index alignment.
     return disparity.reindex(df.index)
@@ -407,9 +388,7 @@ def classify_outlier_regime(
     required = {date_col, symbol_col, status_col}
     missing = required - set(master_df.columns)
     if missing:
-        raise ValueError(
-            f"classify_outlier_regime: missing columns {sorted(missing)}"
-        )
+        raise ValueError(f"classify_outlier_regime: missing columns {sorted(missing)}")
 
     master_df = master_df.copy()
     master_df["_date_bucket"] = pd.to_datetime(master_df[date_col]).dt.normalize()
@@ -456,9 +435,7 @@ def summarize_outlier_regime(
         sys_mask = master_df["outlier_regime"] == OutlierRegime.SYSTEMATIC.value
         if sys_mask.any():
             n_sys_buckets = int(
-                pd.to_datetime(master_df.loc[sys_mask, date_col])
-                .dt.normalize()
-                .nunique()
+                pd.to_datetime(master_df.loc[sys_mask, date_col]).dt.normalize().nunique()
             )
     return {
         "systematic_threshold": systematic_threshold,
@@ -500,8 +477,8 @@ def plot_histogram(
 
     # Overlay Theoretical Normal for comparison
     x = np.linspace(-5, 5, 100)
-    plt.plot(x, stats.norm.pdf(x, 0, 1), 'r--', label="Theoretical Normal")
-    plt.xlim(-5, 5) # Fixed scale: 5 standard deviations
+    plt.plot(x, stats.norm.pdf(x, 0, 1), "r--", label="Theoretical Normal")
+    plt.xlim(-5, 5)  # Fixed scale: 5 standard deviations
     plt.title(f"Standardized Return Distribution: {symbol}")
     plt.legend()
     plt.savefig(audit_dir / f"{symbol}_histogram.png")
@@ -548,10 +525,11 @@ def save_audit_results(
     audit_dir : Path or None
         Directory to write to; defaults to AUDIT_DIR.
     """
-    stats_path = audit_dir / f"log_returns_stats.json"
+    stats_path = audit_dir / "log_returns_stats.json"
     with open(stats_path, "w") as f:
         json.dump(stats_summary, f, indent=2)
     logger.info("Saved stats to %s", stats_path)
+
 
 def process_symbol(
     df: pd.DataFrame,
@@ -633,9 +611,7 @@ def process_symbol(
         volume_window=config.volume_disparity_volume_window,
     ).fillna(False)
 
-    df["outlier_types"] = build_outlier_types(
-        log_ret_mask, z_score_mask, volume_disparity_mask
-    )
+    df["outlier_types"] = build_outlier_types(log_ret_mask, z_score_mask, volume_disparity_mask)
     any_outlier = log_ret_mask | z_score_mask | volume_disparity_mask
     df["status"] = np.where(any_outlier, "Outlier", "Clean")
 
@@ -696,7 +672,7 @@ def main(
     plot_hist: bool,
     interval: Interval,
 ) -> None:
-    """ 
+    """
     Compute log returns for all symbols for the given interval and save to the audit directory.
     """
     config = LogReturnsConfig()
@@ -735,10 +711,10 @@ def main(
                     all_enriched.append(enriched)
             except Exception as e:
                 logger.exception("Failed to process symbol %s: %s", name, e)
-        
-    # save stats_summary unified using save_audit_results 
+
+    # save stats_summary unified using save_audit_results
     save_audit_results(
-        stats_summary=stats_summary, 
+        stats_summary=stats_summary,
         audit_dir=interval_audit_dir,
     )
 
@@ -766,8 +742,9 @@ def main(
             )
         logger.info("Wrote outlier regime summary to %s", regime_summary_path)
 
+
 def cli() -> None:
-    """CLI entry point for ``python -m quant.data.audit`` and ``python log_returns.py``."""
+    """CLI entry point for ``python -m quant.data.audit`` / ``quant.data.audit.returns``."""
     import argparse
 
     parser = argparse.ArgumentParser(description="Log returns audit")
