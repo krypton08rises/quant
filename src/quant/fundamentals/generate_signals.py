@@ -1,13 +1,14 @@
 def get_data():
     """
-    Get trading data from both yfinance and other APIs 
+    Get trading data from both yfinance and other APIs
     perhaps in the future text(news data...)
     """
     pass
 
+
 def get_signal(data):
     """
-        use some logic of the nbeatsx model(for now) and obv / volatility data 
+        use some logic of the nbeatsx model(for now) and obv / volatility data
         to generate buy/sell indicators  --> for eg.
 
     for i in range(len(data)):
@@ -27,4 +28,4 @@ def get_signal(data):
 
     """
 
-    pass 
+    pass

@@ -1,0 +1,3 @@
+timestamp,H,pt_k,sl_k,prec_long,prec_short,recall_long,recall_short,top_feature
+pt_k,prec_short,H,recall_short,top_feature,timestamp,recall_long,sl_k,barrier_mode,prec_long,vol_method,entry,tie_breaking
+1.0,0.4057433396456458,5,0.40784876140808346,feat_bb_pct,2026-02-09 21:58,0.2260454477649048,1.0,returns barriers,0.3984398965774136,ATR,NEXT_OPEN,conservative

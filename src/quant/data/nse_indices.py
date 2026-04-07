@@ -1,28 +1,24 @@
-import requests
 import pandas as pd
+import requests
 
 headers = {
     "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/117.0",
-    'Accept': 'application/json, text/plain, */*',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1',
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 session = requests.Session()
 session.headers.update(headers)
 session.get(
-    "https://www.nseindia.com", 
-    timeout=5, 
-    headers={
-        "User-Agent": "Mozilla/5.0"
-})  # Initial request to set cookies
+    "https://www.nseindia.com", timeout=5, headers={"User-Agent": "Mozilla/5.0"}
+)  # Initial request to set cookies
 
-def nse_indices(index_name:str) -> pd.DataFrame:
-    headers_home = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    }
+
+def nse_indices(index_name: str) -> pd.DataFrame:
+    headers_home = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     session.get("https://www.nseindia.com", headers=headers_home, timeout=5)
 
     index_urls = {
@@ -35,21 +31,22 @@ def nse_indices(index_name:str) -> pd.DataFrame:
 
     # First request to establish session
     session.get("https://www.nseindia.com/")
-    
+
     # Actual request to API endpoint
     response = session.get(index_urls[index_name])
     response.raise_for_status()
 
     data = response.json()
-    df = pd.DataFrame(data['data'])
+    df = pd.DataFrame(data["data"])
 
-    return df[['symbol', 'identifier', 'open', 'dayHigh', 'dayLow', 'lastPrice', 'previousClose']]
+    return df[["symbol", "identifier", "open", "dayHigh", "dayLow", "lastPrice", "previousClose"]]
+
 
 if __name__ == "__main__":
     # Example usage
-    nifty50_df = fetch_index_constituents('nifty50')
-    banknifty_df = fetch_index_constituents('banknifty')
-    midcap250_df = fetch_index_constituents('nifty_midcap_250')
+    nifty50_df = nse_indices("nifty50")
+    banknifty_df = nse_indices("banknifty")
+    midcap250_df = nse_indices("nifty_midcap_250")
 
     # Save to CSVs
     nifty50_df.to_csv("nifty50.csv", index=False)

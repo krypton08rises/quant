@@ -1,12 +1,13 @@
-import os
-import dill
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from pathlib import Path
-from sklearn.metrics import mean_absolute_error, mean_squared_error
-import pmdarima as pm
+import logging
 from datetime import datetime
+from pathlib import Path
+
+import dill
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import pmdarima as pm
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 
 def load_data(index: str, interval: str, data_dir: Path = Path("data/historical/")):
@@ -17,17 +18,13 @@ def load_data(index: str, interval: str, data_dir: Path = Path("data/historical/
         scalers: dict of fitted scalers (if available in payload)
     """
     file_path = data_dir / f"{index}_{interval}.pkl"
-    with open(file_path, 'rb') as f:
+    with open(file_path, "rb") as f:
         payload = dill.load(f)
-    df = payload['data'].dropna().copy()
+    df = payload["data"].dropna().copy()
     # rename to standard
-    df = df.rename(columns={
-        'date': 'ds',
-        'symbol': 'unique_id',
-        'close': 'y'
-    })
-    df['ds'] = pd.to_datetime(df['ds']).dt.tz_localize(None)
-    scalers = payload.get('scalers', {})
+    df = df.rename(columns={"date": "ds", "symbol": "unique_id", "close": "y"})
+    df["ds"] = pd.to_datetime(df["ds"]).dt.tz_localize(None)
+    scalers = payload.get("scalers", {})
     return df, scalers
 
 
@@ -37,9 +34,9 @@ def train_test_split(df: pd.DataFrame, split_date: str):
     Returns train/test dicts of pd.Series indexed by datetime.
     """
     trains, tests = {}, {}
-    df = df.sort_values(['unique_id', 'ds'])
-    for uid, grp in df.groupby('unique_id'):
-        ts = grp.set_index('ds')['y']
+    df = df.sort_values(["unique_id", "ds"])
+    for uid, grp in df.groupby("unique_id"):
+        ts = grp.set_index("ds")["y"]
         trains[uid] = ts[ts.index < split_date]
         tests[uid] = ts[ts.index >= split_date]
     return trains, tests
@@ -65,11 +62,7 @@ def arima_forecast(train: pd.Series, h: int):
         return pd.Series([], dtype=float)
     try:
         model = pm.auto_arima(
-            train,
-            seasonal=False,
-            stepwise=True,
-            suppress_warnings=True,
-            error_action='ignore'
+            train, seasonal=False, stepwise=True, suppress_warnings=True, error_action="ignore"
         )
         fc = model.predict(n_periods=h)
         fc = np.asarray(fc, dtype=float)
@@ -95,20 +88,19 @@ def evaluate_forecasts(trains, tests, methods):
             all_preds[name][uid] = preds
             mae = mean_absolute_error(test.values, preds.values)
             rmse = mean_squared_error(test.values, preds.values)
-            metrics.append({'unique_id': uid,
-                            'model': name,
-                            'MAE': mae,
-                            'RMSE': rmse})
+            metrics.append({"unique_id": uid, "model": name, "MAE": mae, "RMSE": rmse})
     metrics_df = pd.DataFrame(metrics)
     return all_preds, metrics_df
 
 
-def plot_series(df: pd.DataFrame, preds: pd.Series, scaler, output_dir: Path, uid: str, model_name: str):
+def plot_series(
+    df: pd.DataFrame, preds: pd.Series, scaler, output_dir: Path, uid: str, model_name: str
+):
     """
     Plot actual vs predicted series, unscaled if scaler provided.
     """
-    dates = df['ds']
-    y = df['y'].values
+    dates = df["ds"]
+    y = df["y"].values
     y_pred = preds.values
     # unscale if needed
     if scaler is not None:
@@ -116,8 +108,8 @@ def plot_series(df: pd.DataFrame, preds: pd.Series, scaler, output_dir: Path, ui
         y_pred = scaler.inverse_transform(y_pred.reshape(-1, 1)).flatten()
     # plot
     plt.figure(figsize=(10, 6))
-    plt.plot(dates, y, marker='o', label='Actual')
-    plt.plot(dates, y_pred, marker='x', label='Prediction')
+    plt.plot(dates, y, marker="o", label="Actual")
+    plt.plot(dates, y_pred, marker="x", label="Prediction")
     plt.title(f"{model_name.upper()} Forecast for {uid}")
     plt.xlabel("Date")
     plt.ylabel("Close Price")
@@ -132,9 +124,9 @@ def plot_series(df: pd.DataFrame, preds: pd.Series, scaler, output_dir: Path, ui
 
 def main():
     # Config
-    INDEX = 'nifty_50'
-    INTERVAL = 'day'
-    SPLIT_DATE = '2025-06-15'
+    INDEX = "nifty_50"
+    INTERVAL = "day"
+    SPLIT_DATE = "2025-06-15"
 
     # Load data + scalers
     df, scalers = load_data(INDEX, INTERVAL)
@@ -142,39 +134,57 @@ def main():
 
     # Methods
     methods = {
-        'naive': naive_forecast,
-        'rolling_mean': lambda tr, h: rolling_mean_forecast(tr, h, window=5),
-        'arima': arima_forecast
+        "naive": naive_forecast,
+        "rolling_mean": lambda tr, h: rolling_mean_forecast(tr, h, window=5),
+        "arima": arima_forecast,
     }
 
     # Forecast + metrics
     all_preds, metrics_df = evaluate_forecasts(trains, tests, methods)
     print("Metrics summary:")
-    print(metrics_df.groupby('model')[['MAE','RMSE']].describe())
+    print(metrics_df.groupby("model")[["MAE", "RMSE"]].describe())
 
     # Plotting setup
-    base_output = Path('plots')
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    base_output = Path("plots")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     for model_name, preds_dict in all_preds.items():
         model_dir = base_output / model_name / timestamp
         model_dir.mkdir(parents=True, exist_ok=True)
         for uid, preds in preds_dict.items():
             # subset df to test period for this uid
-            df_uid = df[(df['unique_id'] == uid) & (df['ds'] >= SPLIT_DATE)].copy()
+            df_uid = df[(df["unique_id"] == uid) & (df["ds"] >= SPLIT_DATE)].copy()
             # get scaler for this uid & target y
             scaler = scalers.get(f"{uid}_y", None)
             plot_series(df_uid, preds, scaler, model_dir, uid, model_name)
 
     print(f"Plots saved under {base_output}/<model_name>/{timestamp}/")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Evaluate baseline forecasting models on historical data.")
-    parser.add_argument('--index', type=str, default='nifty_50', help="Index to evaluate (default: 'nifty_50')")
-    parser.add_argument('--cutoff_date', type=str, default='2025-05-01', help="Cutoff date for training data (default: '2025-01-01')")
-    parser.add_argument('--interval', type=str, default='day', help="Data interval (default: 'day')")
-    parser.add_argument('--target', type=str, default='close', help="Target column for predictions (default: 'close')")
+
+    parser = argparse.ArgumentParser(
+        description="Evaluate baseline forecasting models on historical data."
+    )
+    parser.add_argument(
+        "--index", type=str, default="nifty_50", help="Index to evaluate (default: 'nifty_50')"
+    )
+    parser.add_argument(
+        "--cutoff_date",
+        type=str,
+        default="2025-05-01",
+        help="Cutoff date for training data (default: '2025-01-01')",
+    )
+    parser.add_argument(
+        "--interval", type=str, default="day", help="Data interval (default: 'day')"
+    )
+    parser.add_argument(
+        "--target",
+        type=str,
+        default="close",
+        help="Target column for predictions (default: 'close')",
+    )
     args = parser.parse_args()
     INDEX = args.index
     SPLIT_DATE = args.cutoff_date
