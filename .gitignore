@@ -16,6 +16,11 @@ src/quant/data/audit/rolling_audits/
 /nse.py
 /results/
 /tft.py
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
 # Global Python cache ignore
 __pycache__/
 *.py[cod]
