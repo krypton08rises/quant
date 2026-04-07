@@ -3,7 +3,7 @@ src/quant/data/audit/plots/
 src/quant/data/audit/rolling_audits/
 /.env
 /.idea/
-/wastebin/
+**/wastebin/
 /s4/
 /tft/
 /neuralforecast/

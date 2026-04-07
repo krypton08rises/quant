@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
-from quant.data._common import BRONZE_DIR, BronzeColumns
+from quant.data._common import BRONZE_DIR, BronzeColumns, Interval
 from quant.data.kite.kite_handler import KiteDataHandler
 from quant.logs.logging import logger
 
@@ -22,25 +22,22 @@ def find_null_volume_data(df: pd.DataFrame) -> pd.DataFrame:
     return null_volume_df
 
 
-def main():
+def main(interval: Interval = Interval.DAY) -> None:
     """
-    Parse through all bronze data files, identify missing dates for each symbol besides weekends and holidays, and log the results.
-
+    Parse through all bronze data files for the given interval and report zero-volume bars.
     """
-    for pth in Path(BRONZE_DIR).glob("*day.pkl"):
+    for pth in Path(BRONZE_DIR).glob(f"*_{interval.value}.pkl"):
+        logger.info(f"Auditing null volume in {pth.name} ...")
         df = KiteDataHandler.load(pth)
         assert not df.empty, f"DataFrame for {pth.stem} is empty. Please check the data source."
         null_volume_data = find_null_volume_data(df)
+        index_name = pth.stem.rsplit(f"_{interval.value}", 1)[0]
         if not null_volume_data.empty:
-            logger.warning(
-                f"Symbol: {pth.stem.split('_')[0]} has {len(null_volume_data)} rows with zero volume."
-            )
-        # volume_max = df[BronzeColumns.VOLUME.value].max()
+            logger.warning(f"{index_name}: {len(null_volume_data)} bars with zero volume.")
         volume_min = df.groupby(BronzeColumns.SYMBOL.value)[BronzeColumns.VOLUME.value].min()
-        # Number of stocks with at least one zero volume day
         num_stocks_with_zero_volume = (volume_min == 0).sum()
         logger.info(
-            f"Symbol: {pth.stem.split('_')[0]} has {num_stocks_with_zero_volume} stocks with at least one zero volume day."
+            f"{index_name}: {num_stocks_with_zero_volume} symbols have at least one zero-volume bar."
         )
         # Optionally, log the specific dates with zero volume for further investigation
         # zero_volume_dates = df[df[BronzeColumns.VOLUME.value] == 0][BronzeColumns.DATE.value]
