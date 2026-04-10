@@ -7,6 +7,9 @@ import pandas as pd
 
 EMBARGOED_DATE_START = pd.Timestamp("2025-01-01", tz="UTC+05:30")
 
+TRAIN_END_DATE = pd.Timestamp("2024-01-01", tz="UTC+05:30")
+""" End of training window (exclusive). Matches val_start_dt in ml/config.py. """
+
 AUDIT_DIR = Path("data/audit/analysis/")
 os.makedirs(AUDIT_DIR, exist_ok=True)
 """ Directory for audit data (log returns, histograms, etc.)."""
@@ -197,4 +200,7 @@ class TripleBarrierSpec:
     config_name: str = ""
 
     def config_str(self):
-        return f"H{self.H}_pt{self.pt_k}_sl{self.sl_k}_{self.vol_method.value}_{self.entry.value}_{self.barrier_mode.value}_{self.tie_breaking.value}"
+        return f"H{self.H}_pt{self.pt_k}_sl{self.sl_k}_{self.vol_method.value}_{self.entry.value}_{self.tie_breaking.value}"
+
+    def silver_dir(self, interval: "Interval") -> Path:
+        return SILVER_DIR / f"{interval.value}__{self.config_str()}"

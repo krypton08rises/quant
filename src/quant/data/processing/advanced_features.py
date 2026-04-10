@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from quant.data._common import SILVER_DIR, TripleBarrierSpec
+from quant.data._common import Interval, TripleBarrierSpec
 from scipy.stats import spearmanr
 from statsmodels.tsa.stattools import adfuller
 
@@ -135,7 +135,8 @@ if __name__ == "__main__":
     # }
     # df_silver = pd.DataFrame(data, index=dates)
 
-    df_silver = pd.read_parquet(f"{SILVER_DIR}/day_{TripleBarrierSpec().config_str()}.parquet")
+    spec = TripleBarrierSpec()
+    df_silver = pd.read_parquet(spec.silver_dir(Interval.DAY) / "train.parquet")
 
     # 2. Initialize Auditor
     auditor = SilverAuditor(df_silver)

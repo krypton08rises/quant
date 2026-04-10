@@ -142,7 +142,7 @@ def atr(high: pd.Series, low: pd.Series, prev_close: pd.Series, period: int = 14
     tr = pd.concat([(high - low), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(
         axis=1
     )
-    return tr.ewm(alpha=1 / period, adjust=False).mean()
+    return tr.ewm(alpha=1 / period, adjust=False, ignore_na=True).mean()
 
 
 def generate_indicators_from_df(

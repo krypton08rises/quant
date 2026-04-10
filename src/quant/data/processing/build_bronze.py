@@ -55,6 +55,28 @@ def build_bronze(interval: str) -> None:
 
         if interval == "day":
             df[RawColumns.DATE.value] = df[RawColumns.DATE.value].dt.normalize()
+            n_before = len(df)
+            df = df.drop_duplicates(
+                subset=[RawColumns.SYMBOL.value, RawColumns.DATE.value], keep="first"
+            )
+            n_dupes = n_before - len(df)
+            if n_dupes:
+                logger.warning(
+                    "%s: dropped %d duplicate (symbol, date) rows after normalization "
+                    "(mixed midnight/intraday timestamps in raw data)",
+                    pth.name,
+                    n_dupes,
+                )
+
+        n_before = len(df)
+        df = df[df["close"] > 0]
+        n_dropped = n_before - len(df)
+        if n_dropped:
+            logger.warning(
+                "%s: dropped %d rows with close <= 0 (zero/phantom price bars from API)",
+                pth.name,
+                n_dropped,
+            )
 
         df = filter_active_universe(df)
         df = remove_phantom_ticks(df)

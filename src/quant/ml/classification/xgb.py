@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 from quant.data._common import (
-    SILVER_DIR,
     EntryPriceMode,
+    Interval,
     RawColumns,
     SilverColumns,
     TripleBarrierSpec,
@@ -54,7 +54,7 @@ def main(interval: str):
         H=5, pt_k=1.0, sl_k=1.0, vol_method=VolMethod.ATR, entry=EntryPriceMode.NEXT_OPEN
     )
     # 1. Load Data
-    df = pd.read_parquet(f"{SILVER_DIR}/{interval}_{spec.config_str()}.parquet")
+    df = pd.read_parquet(spec.silver_dir(Interval(interval)) / "train.parquet")
     df = apply_stationary_transforms(df)
 
     # 2. Pre-processing & Sanitation
