@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from quant.data._common import AUDIT_DIR, BRONZE_DIR, BronzeColumns, Interval
+from quant.data._common import AUDIT_DIR, RAW_DIR, FlagColumns, Interval, RawColumns
 from quant.data.kite.kite_handler import KiteDataHandler
 from quant.logs.logging import logger
 from scipy import stats
@@ -62,7 +62,7 @@ class LogReturnsConfig:
 
 def compute_log_returns(
     df: pd.DataFrame,
-    price_col: BronzeColumns = BronzeColumns.CLOSE,
+    price_col: RawColumns = RawColumns.CLOSE,
 ) -> pd.DataFrame:
     """
     Compute log returns for a price series. Does not mutate the input.
@@ -71,7 +71,7 @@ def compute_log_returns(
     ----------
     df : pd.DataFrame
         DataFrame with a date column and the given price column.
-    price_col : BronzeColumns
+    price_col : RawColumns
         Column used for the price series (typically CLOSE).
 
     Returns
@@ -79,7 +79,7 @@ def compute_log_returns(
     pd.DataFrame
         Copy of the DataFrame with a new 'log_ret' column; rows with NaN log_ret are kept.
     """
-    out = df.sort_values(BronzeColumns.DATE.value).copy()
+    out = df.sort_values(RawColumns.DATE.value).copy()
     out["log_ret"] = np.log(out[price_col.value] / out[price_col.value].shift(1))
     return out
 
@@ -306,7 +306,7 @@ def volume_price_disparity(
     symbol: str,
     *,
     logret_col: str = "log_ret",
-    volume_col: BronzeColumns = BronzeColumns.VOLUME,
+    volume_col: RawColumns = RawColumns.VOLUME,
     logreturn_threshold: float = 0.1,
     volume_window: int = 20,
     min_periods: int | None = None,
@@ -324,7 +324,7 @@ def volume_price_disparity(
         The symbol of the stock.
     logret_col : str
         The column name of the log returns.
-    volume_col : BronzeColumns
+    volume_col : RawColumns
         The column name of the volume.
     logreturn_threshold : float
         The threshold for the log returns.
@@ -347,8 +347,8 @@ def volume_price_disparity(
         raise ValueError(f"Input DataFrame must contain '{volume_col.value}' (volume).")
 
     out = df.copy()
-    if BronzeColumns.DATE.value in out.columns:
-        out = out.sort_values(BronzeColumns.DATE.value)
+    if RawColumns.DATE.value in out.columns:
+        out = out.sort_values(RawColumns.DATE.value)
 
     mp = volume_window if min_periods is None else min_periods
 
@@ -366,8 +366,8 @@ def classify_outlier_regime(
     all_processed_dfs: list[pd.DataFrame],
     systematic_threshold: float = 0.05,
     *,
-    date_col: str = BronzeColumns.DATE.value,
-    symbol_col: str = BronzeColumns.SYMBOL.value,
+    date_col: str = RawColumns.DATE.value,
+    symbol_col: str = RawColumns.SYMBOL.value,
     status_col: str = "status",
 ) -> pd.DataFrame:
     """
@@ -429,7 +429,7 @@ def summarize_outlier_regime(
     if "outlier_regime" in out_rows.columns and not out_rows.empty:
         by_regime = out_rows["outlier_regime"].value_counts().astype(int).to_dict()
 
-    date_col = BronzeColumns.DATE.value
+    date_col = RawColumns.DATE.value
     n_sys_buckets = 0
     if date_col in master_df.columns and "outlier_regime" in master_df.columns:
         sys_mask = master_df["outlier_regime"] == OutlierRegime.SYSTEMATIC.value
@@ -490,16 +490,16 @@ def plot_histogram(
 # -----------------------------------------------------------------------------
 
 
-def load_bronze_data(pth: Path, interval: Interval) -> pd.DataFrame:
+def load_raw_data(pth: Path, interval: Interval) -> pd.DataFrame:
     """
-    Load a bronze pickle and normalize date column.
+    Load a raw pickle and normalize date column.
 
     Parameters
     ----------
     pth : Path
-        Path to an interval bronze pickle (e.g. `*_day.pkl`, `*_60minute.pkl`).
+        Path to an interval raw pickle (e.g. `*_day.pkl`, `*_60minute.pkl`).
     interval : Interval
-        Bronze interval; date normalization is only applied for `Interval.DAY`.
+        Raw interval; date normalization is only applied for `Interval.DAY`.
 
     Returns
     -------
@@ -508,7 +508,7 @@ def load_bronze_data(pth: Path, interval: Interval) -> pd.DataFrame:
     """
     df = KiteDataHandler.load(pth)
     if interval == Interval.DAY:
-        df[BronzeColumns.DATE.value] = df[BronzeColumns.DATE.value].dt.normalize()
+        df[RawColumns.DATE.value] = df[RawColumns.DATE.value].dt.normalize()
     return df
 
 
@@ -535,10 +535,11 @@ def process_symbol(
     df: pd.DataFrame,
     symbol: str,
     config: LogReturnsConfig | None = None,
-    price_col: BronzeColumns = BronzeColumns.CLOSE,
+    price_col: RawColumns = RawColumns.CLOSE,
     histogram: bool = False,
     audit_dir: Path | None = None,
     interval: Interval = Interval.DAY,
+    mutate: bool = False,
 ) -> tuple[dict, pd.DataFrame | None]:
     """
     Run the full log-returns audit pipeline for one symbol.
@@ -546,19 +547,23 @@ def process_symbol(
     Parameters
     ----------
     df : pd.DataFrame
-        Bronze-style DataFrame (date, symbol, OHLC, etc.).
+        Raw-style DataFrame (date, symbol, OHLC, etc.).
     symbol : str
         Symbol name for logging and outputs.
     config : LogReturnsConfig or None
         If None, uses default LogReturnsConfig().
-    price_col : BronzeColumns
+    price_col : RawColumns
         Price column for log returns.
     histogram : bool
         Whether to save a histogram.
     audit_dir : Path or None
         Where to save audit outputs; defaults to AUDIT_DIR.
     interval : Interval
-        Bronze interval (for logging and JSON metadata).
+        Data interval (for logging and JSON metadata).
+    mutate : bool
+        If True, add boolean FlagColumns to the returned DataFrame for downstream
+        storage (e.g. building bronze). If False (default), add audit-only columns
+        (outlier_types, status) for use with classify_outlier_regime.
 
     Returns
     -------
@@ -614,6 +619,11 @@ def process_symbol(
     df["outlier_types"] = build_outlier_types(log_ret_mask, z_score_mask, volume_disparity_mask)
     any_outlier = log_ret_mask | z_score_mask | volume_disparity_mask
     df["status"] = np.where(any_outlier, "Outlier", "Clean")
+
+    if mutate:
+        df[FlagColumns.LOG_RET] = log_ret_mask.fillna(False)
+        df[FlagColumns.Z_SCORE] = z_score_mask.fillna(False)
+        df[FlagColumns.VOLUME_PRICE_DISPARITY] = volume_disparity_mask.fillna(False)
 
     outlier_row_counts_by_type = {
         OutlierType.LOG_RET.value: int(log_ret_mask.sum()),
@@ -679,24 +689,24 @@ def main(
     interval_audit_dir = Path(AUDIT_DIR) / interval.value
     interval_audit_dir.mkdir(parents=True, exist_ok=True)
 
-    bronze_paths = list(Path(BRONZE_DIR).glob(f"*_{interval.value}.pkl"))
-    if not bronze_paths:
+    raw_paths = list(Path(RAW_DIR).glob(f"*_{interval.value}.pkl"))
+    if not raw_paths:
         logger.warning(
-            "No bronze files found for interval '%s' in %s",
+            "No raw files found for interval '%s' in %s",
             interval.value,
-            BRONZE_DIR,
+            RAW_DIR,
         )
         return
 
     stats_summary = {}
     all_enriched: list[pd.DataFrame] = []
-    for pth in bronze_paths:
+    for pth in raw_paths:
         try:
-            df = load_bronze_data(pth, interval=interval)
+            df = load_raw_data(pth, interval=interval)
         except Exception as e:
             logger.exception("Failed to load %s: %s", pth, e)
             continue
-        for name, group in df.groupby(BronzeColumns.SYMBOL.value):
+        for name, group in df.groupby(RawColumns.SYMBOL.value):
             try:
                 summary, enriched = process_symbol(
                     group,

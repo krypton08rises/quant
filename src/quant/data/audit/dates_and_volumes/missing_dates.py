@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from quant.data._common import BRONZE_DIR, BronzeColumns, Interval
+from quant.data._common import RAW_DIR, Interval, RawColumns
 from quant.data.kite.kite_handler import KiteDataHandler
 from quant.logs.logging import logger
 
@@ -35,7 +35,7 @@ def _expected_intraday_bars(
 
 
 def find_missing_dates(
-    df: pd.DataFrame, date_col: BronzeColumns, interval: Interval
+    df: pd.DataFrame, date_col: RawColumns, interval: Interval
 ) -> pd.DatetimeIndex:
     """
     Identify missing bars in a DataFrame for the given interval.
@@ -47,7 +47,7 @@ def find_missing_dates(
     ---------
     df: pd.DataFrame
         The input DataFrame containing a date/timestamp column.
-    date_col: BronzeColumns
+    date_col: RawColumns
         The name of the date column in the DataFrame.
     interval: Interval
         The bar interval — determines what counts as a missing bar.
@@ -91,8 +91,8 @@ def resolve_holidays(grouped_missing: pd.Series) -> pd.Series:
 
 def remove_phantom_ticks(
     df: pd.DataFrame,
-    date_col: BronzeColumns = BronzeColumns.DATE,
-    symbol_col: BronzeColumns = BronzeColumns.SYMBOL,
+    date_col: RawColumns = RawColumns.DATE,
+    symbol_col: RawColumns = RawColumns.SYMBOL,
     min_phantom_gap_days: int = 45,
 ) -> pd.DataFrame:
     """
@@ -129,8 +129,8 @@ def remove_phantom_ticks(
 
 def filter_active_universe(
     df: pd.DataFrame,
-    symbol_col: BronzeColumns = BronzeColumns.SYMBOL,
-    date_col: BronzeColumns = BronzeColumns.DATE,
+    symbol_col: RawColumns = RawColumns.SYMBOL,
+    date_col: RawColumns = RawColumns.DATE,
 ) -> pd.DataFrame:
     """
     Filters out stocks whose last trading bar is before 2026.
@@ -138,8 +138,8 @@ def filter_active_universe(
     Arguments
     ---------
     df: pd.DataFrame
-    symbol_col: BronzeColumns
-    date_col: BronzeColumns
+    symbol_col: RawColumns
+    date_col: RawColumns
 
     Returns
     -------
@@ -174,8 +174,8 @@ def get_market_holidays(
     tuple[set, set]
         (holidays, unresolved_dates)
     """
-    first_traded = df.groupby(BronzeColumns.SYMBOL.value)[BronzeColumns.DATE.value].min()
-    last_traded = df.groupby(BronzeColumns.SYMBOL.value)[BronzeColumns.DATE.value].max()
+    first_traded = df.groupby(RawColumns.SYMBOL.value)[RawColumns.DATE.value].min()
+    last_traded = df.groupby(RawColumns.SYMBOL.value)[RawColumns.DATE.value].max()
 
     if interval != Interval.DAY:
         first_traded = first_traded.dt.normalize()
@@ -240,19 +240,19 @@ def main(interval: Interval = Interval.DAY) -> None:
     """
     Run the missing-bars audit for the given interval across all matching bronze files.
     """
-    for pth in Path(BRONZE_DIR).glob(f"*_{interval.value}.pkl"):
+    for pth in Path(RAW_DIR).glob(f"*_{interval.value}.pkl"):
         logger.info(f"Auditing {pth.name} ...")
         df = KiteDataHandler.load(pth)
 
         # For daily data, strip the intraday time component before date comparisons
         if interval == Interval.DAY:
-            df[BronzeColumns.DATE.value] = df[BronzeColumns.DATE.value].dt.normalize()
+            df[RawColumns.DATE.value] = df[RawColumns.DATE.value].dt.normalize()
 
         df = filter_active_universe(df)
         df = remove_phantom_ticks(df)
 
-        missing = df.groupby(BronzeColumns.SYMBOL.value).apply(
-            lambda x: find_missing_dates(x, date_col=BronzeColumns.DATE, interval=interval)
+        missing = df.groupby(RawColumns.SYMBOL.value).apply(
+            lambda x: find_missing_dates(x, date_col=RawColumns.DATE, interval=interval)
         )
         holidays, _ = get_market_holidays(df, missing, interval)
         audit_data_quality(missing, holidays)

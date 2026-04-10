@@ -33,7 +33,7 @@ async def backfill_index(
     interval: str,
     from_date: date | None,
     indices_dir: Path = Path("data/indices"),
-    out_dir: Path = Path("data/historical/bronze/"),
+    out_dir: Path = Path("data/historical/raw/"),
 ):
     """
     Backfill historical data for a given index from the specified date.

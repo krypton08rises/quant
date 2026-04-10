@@ -10,10 +10,10 @@ from quant.data._common import (
     CUTOFF_DATE,
     EMBARGOED_DATE_START,
     SILVER_DIR,
-    BronzeColumns,
     EntryPriceMode,
     Indices,
     Interval,
+    RawColumns,
     SilverColumns,
     TieBreaking,
     TripleBarrierSpec,
@@ -108,7 +108,7 @@ def label_at_t(df: pd.DataFrame, t: int, spec: TripleBarrierSpec) -> Optional[in
     # start checking our labels from Jan 2nd
     end_idx = min(t + spec.H, len(df))  # if H=5, check till Jan 6th (exclusive)
     if t + spec.H >= len(df):
-        date_val = df[BronzeColumns.DATE].iloc[t] if BronzeColumns.DATE in df.columns else t
+        date_val = df[RawColumns.DATE].iloc[t] if RawColumns.DATE in df.columns else t
         logger.warning(
             f"Not enough future data to apply vertical barrier of H={spec.H} days at index {t}. Only have {len(df)-t-1} days ahead. Date is {date_val}."
         )
@@ -165,8 +165,8 @@ def generate_static_dataset(interval: Interval, spec: TripleBarrierSpec):
         master.append(data)
     df = pd.concat(master, ignore_index=True)
     # remove any duplicates
-    df.drop_duplicates(subset=[BronzeColumns.SYMBOL, BronzeColumns.DATE], inplace=True)
-    number_of_symbols = df[BronzeColumns.SYMBOL].nunique()
+    df.drop_duplicates(subset=[RawColumns.SYMBOL, RawColumns.DATE], inplace=True)
+    number_of_symbols = df[RawColumns.SYMBOL].nunique()
     logger.info(
         f"Loaded bronze data for {number_of_symbols} unique symbols across indices at interval {interval.value}."
     )
@@ -174,17 +174,17 @@ def generate_static_dataset(interval: Interval, spec: TripleBarrierSpec):
     # For each symbol, compute indicators and subsequently labelling
     def process_symbol(sym_df: pd.DataFrame) -> pd.DataFrame:
         symbol_val = sym_df.name if hasattr(sym_df, "name") else sym_df.index[0]
-        sym_df[BronzeColumns.SYMBOL.value] = symbol_val
+        sym_df[RawColumns.SYMBOL.value] = symbol_val
         # logger.info(f"Columns available for symbol : {sym_df.columns.tolist()}")
-        sym_df = sym_df.sort_values(by=BronzeColumns.DATE).reset_index(drop=True)
-        sym_df = generate_indicators_from_df(sym_df, tag=BronzeColumns.CLOSE)
+        sym_df = sym_df.sort_values(by=RawColumns.DATE).reset_index(drop=True)
+        sym_df = generate_indicators_from_df(sym_df, tag=RawColumns.CLOSE)
         assert (
             SilverColumns.ATR in sym_df.columns
         ), "ATR indicator must be computed before labelling."
 
         for t in tqdm(
             range(len(sym_df) - spec.H - 1),
-            desc=f"Labeling Symbol {sym_df[BronzeColumns.SYMBOL.value].iloc[0]} for H={spec.H}",
+            desc=f"Labeling Symbol {sym_df[RawColumns.SYMBOL.value].iloc[0]} for H={spec.H}",
         ):
             label = label_at_t(sym_df, t, spec)
             sym_df.loc[t, f"label_{spec.H}"] = label
@@ -193,12 +193,12 @@ def generate_static_dataset(interval: Interval, spec: TripleBarrierSpec):
     try:
         [TripleBarrierSpec(H=5), TripleBarrierSpec(H=7)]
         df_labelled = (
-            df.groupby(BronzeColumns.SYMBOL, as_index=False)
+            df.groupby(RawColumns.SYMBOL, as_index=False)
             .apply(process_symbol)
             .reset_index(drop=True)
         )
         assert (
-            BronzeColumns.SYMBOL.value in df_labelled.columns
+            RawColumns.SYMBOL.value in df_labelled.columns
         ), "After labelling, SYMBOL column must exist."
         # logger.info(f"Completed labelling for all symbols.")
         return df_labelled
@@ -243,13 +243,13 @@ def main():
         f"{SILVER_DIR}/embargoed_{Interval.DAY.value}_{spec.H}_{spec.pt_k}_{spec.sl_k}.parquet"
     )
 
-    train_df = df_static[df_static[BronzeColumns.DATE.value] <= CUTOFF_DATE]
+    train_df = df_static[df_static[RawColumns.DATE.value] <= CUTOFF_DATE]
     test_df = df_static[
-        (df_static[BronzeColumns.DATE.value] > CUTOFF_DATE)
-        & (df_static[BronzeColumns.DATE.value] <= EMBARGOED_DATE_START)
+        (df_static[RawColumns.DATE.value] > CUTOFF_DATE)
+        & (df_static[RawColumns.DATE.value] <= EMBARGOED_DATE_START)
     ]
     logger.info(f"Training set size: {len(train_df)}, Testing set size: {len(test_df)}")
-    embargoed_df = test_df[test_df[BronzeColumns.DATE.value] >= EMBARGOED_DATE_START]
+    embargoed_df = test_df[test_df[RawColumns.DATE.value] >= EMBARGOED_DATE_START]
     train_df.to_parquet(train_path)
     logger.info(f"Static labelled dataset saved to {train_path}.")
 

@@ -3,8 +3,8 @@ import pandas as pd
 import xgboost as xgb
 from quant.data._common import (
     SILVER_DIR,
-    BronzeColumns,
     EntryPriceMode,
+    RawColumns,
     SilverColumns,
     TripleBarrierSpec,
     VolMethod,
@@ -73,18 +73,18 @@ def main(interval: str):
     # Encode Symbol (Global model needs to know which stock is which, or treating them )
     # Note: anonymouslyFor a pure technical model, we often DROP the symbol to force learning generalized price action.
     # Let's keep it as category for now.
-    df[BronzeColumns.SYMBOL.value] = df[BronzeColumns.SYMBOL.value].astype("category")
+    df[RawColumns.SYMBOL.value] = df[RawColumns.SYMBOL.value].astype("category")
 
     # 3. Feature Selection
     # define drop columns (Raw prices must go!)
     drop_cols = [
-        BronzeColumns.DATE.value,
-        BronzeColumns.SYMBOL.value,
-        BronzeColumns.OPEN.value,
-        BronzeColumns.HIGH.value,
-        BronzeColumns.LOW.value,
-        BronzeColumns.CLOSE.value,
-        BronzeColumns.VOLUME.value,  # Volume is non-stationary, use Vol/AvgVol instead if you have it
+        RawColumns.DATE.value,
+        RawColumns.SYMBOL.value,
+        RawColumns.OPEN.value,
+        RawColumns.HIGH.value,
+        RawColumns.LOW.value,
+        RawColumns.CLOSE.value,
+        RawColumns.VOLUME.value,  # Volume is non-stationary, use Vol/AvgVol instead if you have it
         SilverColumns.LABEL_5DAY.value,
         SilverColumns.EMA_12.value,
         SilverColumns.EMA_26.value,
@@ -111,9 +111,9 @@ def main(interval: str):
     cutoff_date = "2018-12-31"
 
     logger.info(f"Splitting data at cutoff: {cutoff_date}")
-    train_mask = df[BronzeColumns.DATE.value] <= cutoff_date
-    test_mask = (df[BronzeColumns.DATE.value] > cutoff_date) & (
-        df[BronzeColumns.DATE.value] <= "2025-12-31"
+    train_mask = df[RawColumns.DATE.value] <= cutoff_date
+    test_mask = (df[RawColumns.DATE.value] > cutoff_date) & (
+        df[RawColumns.DATE.value] <= "2025-12-31"
     )
 
     X_train = X[train_mask]

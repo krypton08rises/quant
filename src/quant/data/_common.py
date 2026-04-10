@@ -9,8 +9,11 @@ EMBARGOED_DATE_START = pd.Timestamp("2025-01-01", tz="UTC+05:30")
 AUDIT_DIR = Path("data/audit/analysis/")
 """ Directory for audit data (log returns, histograms, etc.)."""
 
+RAW_DIR = Path("data/historical/raw")
+""" Directory for raw historical data (raw OHLCV + candle features)."""
+
 BRONZE_DIR = Path("data/historical/bronze")
-""" Directory for bronze historical data (raw + candle features)."""
+""" Directory for bronze historical data (raw OHLCV + audit flag columns)."""
 
 SILVER_DIR = Path("data/historical/silver")
 """ Directory for silver historical data (with technical indicators and labels)."""
@@ -65,7 +68,7 @@ class Interval(Enum):
 """ Minutes corresponding to the interval. """
 
 
-class BronzeColumns(StrEnum):
+class RawColumns(StrEnum):
     SYMBOL = "symbol"
     DATE = "date"
     OPEN = "open"
@@ -77,7 +80,17 @@ class BronzeColumns(StrEnum):
     CANDLE_FEATURES_START = "candle_"
 
 
-""" Standardized column names for bronze data. """
+""" Standardized column names for raw data. """
+
+
+class FlagColumns(StrEnum):
+    LOG_RET = "flag_log_ret"
+    Z_SCORE = "flag_z_score"
+    VOLUME_PRICE_DISPARITY = "flag_volume_price_disparity"
+    NULL_VOLUME = "flag_null_volume"
+
+
+""" Audit flag columns added to bronze data. """
 
 
 class SilverColumns(StrEnum):
