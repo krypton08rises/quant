@@ -171,3 +171,6 @@ tests/data/
 # Audit outputs
 src/quant/data/audit/plots/
 src/quant/data/audit/rolling_audits/
+
+# Claude Code
+CLAUDE.md
