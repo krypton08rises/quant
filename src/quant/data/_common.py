@@ -46,6 +46,8 @@ INTERVAL_LOOKBACK = {
 
 
 class Indices(Enum):
+    """Supported NSE market indices."""
+
     BANKNIFTY = "banknifty"
     NIFTY = "nifty_50"
     MIDCAP150 = "midcap_150"
@@ -53,10 +55,9 @@ class Indices(Enum):
     NIFTYFINSERV = "nifty_finserv"
 
 
-""" Supported market indices. """
-
-
 class Interval(Enum):
+    """Kite API bar intervals with a helper property to convert to minutes."""
+
     DAY = "day"
     MINUTE_60 = "60minute"
     MINUTE_30 = "30minute"
@@ -67,16 +68,23 @@ class Interval(Enum):
     MINUTE_1 = "1minute"
 
     @property
-    def minutes(self):
+    def minutes(self) -> int:
+        """
+        Convert the interval to its duration in minutes.
+
+        Returns
+        -------
+        int
+            1440 for ``DAY``; the numeric prefix for all intraday variants.
+        """
         if self == Interval.DAY:
             return 1440
         return int(self.value.replace("minute", ""))
 
 
-""" Minutes corresponding to the interval. """
-
-
 class RawColumns(StrEnum):
+    """Standardized column names for raw OHLCV + candlestick data."""
+
     SYMBOL = "symbol"
     DATE = "date"
     OPEN = "open"
@@ -88,20 +96,18 @@ class RawColumns(StrEnum):
     CANDLE_FEATURES_START = "candle_"
 
 
-""" Standardized column names for raw data. """
-
-
 class FlagColumns(StrEnum):
+    """Audit flag columns added to the bronze layer."""
+
     LOG_RET = "flag_log_ret"
     Z_SCORE = "flag_z_score"
     VOLUME_PRICE_DISPARITY = "flag_volume_price_disparity"
     NULL_VOLUME = "flag_null_volume"
 
 
-""" Audit flag columns added to bronze data. """
-
-
 class SilverColumns(StrEnum):
+    """Standardized column names for silver-layer technical indicators and labels."""
+
     RSI = "rsi"
     MACD = "macd"
     EMA_12 = "ema_12"
@@ -117,9 +123,6 @@ class SilverColumns(StrEnum):
     LABEL_3DAY = "label_3"
     LABEL_5DAY = "label_5"
     LABEL_7DAY = "label_7"
-
-
-""" Standardized column names for silver data. """
 
 
 class BarrierMode(Enum):
@@ -187,7 +190,9 @@ class TripleBarrierSpec:
     TripleBarrierSpec
     """
 
-    use_high_low: bool = True  # True (daily uses high/low to detect hits); False (intraday uses close prices to detect hits)
+    use_high_low: bool = (
+        True  # True (daily uses high/low to detect hits); False (intraday uses close prices to detect hits)
+    )
     vol_method: VolMethod = VolMethod.ATR  # or "STD"
     atr_length: int = 14
     pt_k: float = 1.0
@@ -199,8 +204,30 @@ class TripleBarrierSpec:
 
     config_name: str = ""
 
-    def config_str(self):
+    def config_str(self) -> str:
+        """
+        Return a deterministic string identifier for this spec, used in file naming.
+
+        Returns
+        -------
+        str
+            Underscore-separated string encoding H, pt_k, sl_k, vol_method, entry, and
+            tie_breaking, e.g. ``H5_pt1.0_sl1.0_ATR_NEXT_OPEN_conservative``.
+        """
         return f"H{self.H}_pt{self.pt_k}_sl{self.sl_k}_{self.vol_method.value}_{self.entry.value}_{self.tie_breaking.value}"
 
     def silver_dir(self, interval: "Interval") -> Path:
+        """
+        Resolve the silver data directory for this spec and interval.
+
+        Arguments
+        ---------
+        interval : Interval
+            The bar interval (e.g. ``Interval.DAY``).
+
+        Returns
+        -------
+        Path
+            ``SILVER_DIR / "<interval.value>__<config_str()>"``.
+        """
         return SILVER_DIR / f"{interval.value}__{self.config_str()}"

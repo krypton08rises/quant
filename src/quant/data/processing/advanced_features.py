@@ -4,9 +4,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from quant.data._common import Interval, TripleBarrierSpec
 from scipy.stats import spearmanr
 from statsmodels.tsa.stattools import adfuller
+
+from quant.data._common import Interval, TripleBarrierSpec
 
 # Suppress warnings for cleaner output during research sprints
 warnings.filterwarnings("ignore")
@@ -15,8 +16,13 @@ warnings.filterwarnings("ignore")
 class SilverAuditor:
     def __init__(self, df: pd.DataFrame, target_col: str = "target_next_return"):
         """
-        :param df: The Silver DataFrame (OHLCV + Indicators)
-        :param target_col: The name of the column representing future returns (for IC analysis)
+        Arguments
+        ---------
+        df : pd.DataFrame
+            The silver DataFrame (OHLCV + computed indicators).
+        target_col : str
+            Name of the column representing future returns used for IC analysis.
+            If absent, a 1-period forward log return is synthesised automatically.
         """
         self.df = df.copy()
         self.target_col = target_col
@@ -30,10 +36,17 @@ class SilverAuditor:
         # Drop NaNs created by indicators/shifting for the sake of statistical tests
         self.df.dropna(inplace=True)
 
-    def check_stationarity(self):
+    def check_stationarity(self) -> pd.DataFrame:
         """
-        Runs Augmented Dickey-Fuller test on all numeric columns.
-        Goal: p-value < 0.05
+        Run Augmented Dickey-Fuller test on all numeric feature columns.
+
+        Goal: p-value < 0.05 indicates stationarity.
+
+        Returns
+        -------
+        pd.DataFrame
+            One row per feature with columns ``Feature``, ``ADF P-Value``, ``Stationary``,
+            sorted by p-value descending (worst offenders first).
         """
         print("\n--- 1. STATIONARITY TEST (ADF) ---")
         results = []
@@ -64,10 +77,12 @@ class SilverAuditor:
         print(self.stationarity_df[~self.stationarity_df["Stationary"]].head(5))
         return self.stationarity_df
 
-    def check_collinearity(self):
+    def check_collinearity(self) -> None:
         """
-        Checks correlation between features.
-        Goal: Identify pairs with corr > 0.95
+        Check pairwise absolute correlation between all numeric features.
+
+        Goal: identify features with correlation > 0.95 that are candidates for removal.
+        Renders an inline heatmap (notebook) or opens a window (script).
         """
         print("\n--- 2. COLLINEARITY CHECK ---")
         numeric_cols = self.df.select_dtypes(include=[np.number]).columns
@@ -93,10 +108,18 @@ class SilverAuditor:
         plt.tight_layout()
         plt.show()  # In a notebook, this displays inline. In script, saves or pops up.
 
-    def check_signal_strength(self):
+    def check_signal_strength(self) -> pd.DataFrame:
         """
-        Calculates Information Coefficient (Spearman Corr) between feature and Target.
-        Goal: Absolute IC > 0.02 is usually a starting point for daily data.
+        Calculate the Information Coefficient (IC) between each feature and the target.
+
+        Uses Spearman rank correlation to capture non-linear relationships.
+        Goal: absolute IC > 0.02 is the minimum useful signal for daily data.
+
+        Returns
+        -------
+        pd.DataFrame
+            One row per feature with columns ``Feature``, ``IC (Spearman)``, ``P-Value``,
+            sorted by absolute IC descending.
         """
         print("\n--- 3. PREDICTIVE POWER (Signal-to-Noise) ---")
         results = []

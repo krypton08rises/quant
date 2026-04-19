@@ -26,6 +26,14 @@ class HurstResult:
     regime: str  # "mean_reverting" | "random_walk" | "trending"
 
     def to_dict(self) -> dict:
+        """
+        Serialise the result to a JSON-compatible dictionary.
+
+        Returns
+        -------
+        dict
+            Keys: ``feature``, ``symbol``, ``H``, ``n_obs``, ``regime``.
+        """
         return {
             "feature": self.feature,
             "symbol": self.symbol,
@@ -36,6 +44,24 @@ class HurstResult:
 
 
 def _classify_regime(H: float, lb: float = 0.45, ub: float = 0.55) -> str:
+    """
+    Map a Hurst exponent to a regime label.
+
+    Arguments
+    ---------
+    H : float
+        Estimated Hurst exponent.
+    lb : float
+        Lower bound of the random-walk band (exclusive).
+    ub : float
+        Upper bound of the random-walk band (exclusive).
+
+    Returns
+    -------
+    str
+        ``"mean_reverting"`` when H < lb, ``"trending"`` when H > ub,
+        ``"random_walk"`` otherwise.
+    """
     if H < lb:
         return "mean_reverting"
     elif H > ub:
@@ -55,9 +81,26 @@ def rescaled_range_hurst(
     Estimate the Hurst exponent using the Rescaled Range (R/S) method.
 
     Splits the series into chunks of varying sizes, computes R/S for each,
-    then regresses log(R/S) on log(chunk size).  The slope is H.
+    then regresses log(R/S) on log(chunk size). The slope of that regression is H.
 
-    Returns ``None`` when the series has fewer than *min_obs* finite values.
+    Arguments
+    ---------
+    series : pd.Series
+        The time series to analyse (e.g. log returns or a price column).
+    feature : str
+        Column name label included in the result (for reporting).
+    symbol : str
+        Ticker symbol label included in the result (for reporting).
+    min_obs : int
+        Minimum number of finite observations required; returns ``None`` if not met.
+    min_chunk : int
+        Smallest chunk size (power-of-2 series starts here).
+
+    Returns
+    -------
+    HurstResult | None
+        Structured result with H, regime, and n_obs, or ``None`` when the series is
+        too short or produces fewer than two valid chunk-size points for regression.
     """
     clean = series.dropna().values.astype(float)
     N = len(clean)

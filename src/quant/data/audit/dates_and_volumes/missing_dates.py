@@ -2,6 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
 from quant.data._common import RAW_DIR, Interval, RawColumns
 from quant.data.kite.kite_handler import KiteDataHandler
 from quant.logs.logging import logger
@@ -96,11 +97,26 @@ def remove_phantom_ticks(
     min_phantom_gap_days: int = 45,
 ) -> pd.DataFrame:
     """
-    Identifies massive time gaps (phantom ticks / pre-IPO data) and removes
-    all rows before the *latest* such gap per symbol.
+    Drop pre-IPO / phantom-tick history by removing rows before the latest large gap per symbol.
 
-    Works for both daily and intraday — a 45-day gap far exceeds any normal
-    overnight or weekend break at any supported interval.
+    A gap of ``min_phantom_gap_days`` far exceeds any normal overnight or weekend break at
+    any supported interval, so it reliably identifies pre-IPO or back-filled artefact data.
+
+    Arguments
+    ---------
+    df : pd.DataFrame
+        Input DataFrame containing at least *date_col* and *symbol_col*.
+    date_col : RawColumns
+        Column holding the bar timestamp.
+    symbol_col : RawColumns
+        Column holding the ticker symbol.
+    min_phantom_gap_days : int
+        Minimum gap (in calendar days) that is treated as a phantom-tick boundary.
+
+    Returns
+    -------
+    pd.DataFrame
+        Filtered DataFrame with pre-gap rows removed; helper columns dropped.
     """
     df = df.sort_values([symbol_col.value, date_col.value])
     df["time_jump"] = df.groupby(symbol_col.value)[date_col.value].diff()
@@ -133,18 +149,21 @@ def filter_active_universe(
     date_col: RawColumns = RawColumns.DATE,
 ) -> pd.DataFrame:
     """
-    Filters out stocks whose last trading bar is before 2026.
+    Remove symbols whose last trading bar predates 2026 (delisted / inactive stocks).
 
     Arguments
     ---------
-    df: pd.DataFrame
-    symbol_col: RawColumns
-    date_col: RawColumns
+    df : pd.DataFrame
+        Input DataFrame containing at least *symbol_col* and *date_col*.
+    symbol_col : RawColumns
+        Column holding the ticker symbol.
+    date_col : RawColumns
+        Column holding the bar timestamp.
 
     Returns
     -------
     pd.DataFrame
-        Filtered DataFrame containing only active stocks.
+        Filtered copy retaining only symbols with at least one bar on or after 2026-01-01.
     """
     last_active = df.groupby(symbol_col.value)[date_col.value].max()
     active_symbols = last_active[last_active >= pd.Timestamp("2026-01-01", tz="Asia/Kolkata")].index
@@ -156,23 +175,27 @@ def get_market_holidays(
     df: pd.DataFrame, missing_dates: pd.Series, interval: Interval
 ) -> tuple[set, set]:
     """
-    Dynamic-denominator approach to identify market holidays.
+    Identify market holidays using a dynamic-denominator consensus approach.
 
-    A date is flagged as a holiday when ≥90% of stocks that were active on
-    that date have no bars for it. Works for all intervals by operating at
-    date granularity.
+    A date is classified as a holiday when ≥ 90 % of stocks that were active on that
+    date have no bars for it. Operates at date granularity so intraday and daily data
+    are handled consistently.
 
     Arguments
     ---------
-    df: pd.DataFrame
-    missing_dates: pd.Series
-        Per-symbol Series of missing bar DatetimeIndex.
-    interval: Interval
+    df : pd.DataFrame
+        Full DataFrame used to determine each symbol's first and last traded date.
+    missing_dates : pd.Series
+        Per-symbol Series whose values are ``DatetimeIndex`` objects of missing bars
+        (output of a ``groupby(...).apply(find_missing_dates)`` call).
+    interval : Interval
+        Data interval; intraday timestamps are normalised to dates before comparison.
 
     Returns
     -------
     tuple[set, set]
-        (holidays, unresolved_dates)
+        ``(holidays, unresolved_dates)`` where *holidays* are dates explained by
+        market closure and *unresolved_dates* are potential data quality issues.
     """
     first_traded = df.groupby(RawColumns.SYMBOL.value)[RawColumns.DATE.value].min()
     last_traded = df.groupby(RawColumns.SYMBOL.value)[RawColumns.DATE.value].max()

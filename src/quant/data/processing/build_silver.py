@@ -1,10 +1,11 @@
 import argparse
 import logging
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
+
 from quant.data._common import (
     BRONZE_DIR,
     CUTOFF_DATE,
@@ -18,7 +19,6 @@ from quant.data._common import (
     TripleBarrierSpec,
     VolMethod,
 )
-from tqdm import tqdm
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ def compute_atr(df: pd.DataFrame, t: int, spec: TripleBarrierSpec) -> float:
     raise ValueError(f"Unsupported volatility method: {spec.vol_method}")
 
 
-def label_at_t(df: pd.DataFrame, t: int, spec: TripleBarrierSpec) -> Optional[int]:
+def label_at_t(df: pd.DataFrame, t: int, spec: TripleBarrierSpec) -> int | None:
     """
     Label the data point at time t using the triple barrier method.
     Arguments
@@ -84,7 +84,7 @@ def label_at_t(df: pd.DataFrame, t: int, spec: TripleBarrierSpec) -> Optional[in
         The specification for the triple barrier method.
     Returns
     -------
-    Optional[int]
+    int | None
         The label for the data point at time t: +1 for profit target hit, -1 for stop loss hit, 0 for neither.
     """
 
@@ -100,8 +100,8 @@ def label_at_t(df: pd.DataFrame, t: int, spec: TripleBarrierSpec) -> Optional[in
     pt_barrier = entry_price + (spec.pt_k * vol)
     sl_barrier = entry_price - (spec.sl_k * vol)
 
-    # If t = Jan 1st
-    start_idx = t + 1 if spec.entry == EntryPriceMode.TODAYS_CLOSE else t + 1
+    # start checking from t+1 regardless of entry mode (entry is at t or t+1, barriers from t+1 onward)
+    start_idx = t + 1
 
     # start checking our labels from Jan 2nd
     end_idx = min(t + spec.H, len(df))  # if H=5, check till Jan 6th (exclusive)
@@ -139,14 +139,16 @@ def label_at_t(df: pd.DataFrame, t: int, spec: TripleBarrierSpec) -> Optional[in
     return 0  # neither barrier hit within H days
 
 
-def generate_static_dataset(interval: Interval, spec: TripleBarrierSpec):
+def generate_static_dataset(interval: Interval, spec: TripleBarrierSpec) -> pd.DataFrame:
     """
     Generates a static dataset for all stocks available in our file system.
     Initially only for daily interval.
     Arguments
     ---------
-    interval: Interval
+    interval : Interval
         The data interval (e.g., daily, 60minute).
+    spec : TripleBarrierSpec
+        Triple barrier configuration (H, pt_k, sl_k, entry mode, tie-breaking rule).
     Returns
     -------
     pd.DataFrame
@@ -159,8 +161,12 @@ def generate_static_dataset(interval: Interval, spec: TripleBarrierSpec):
     for index in Indices:
         # Load all data
         data = KiteDataHandler.load(Path(f"{BRONZE_DIR}/{index.value}_{interval.value}.pkl"))
-
+        if data is None or data.empty:
+            logger.warning(f"Skipping {index}; Likely file not found!")
+            continue
         master.append(data)
+    if not master:
+        return pd.DataFrame()
     df = pd.concat(master, ignore_index=True)
     # remove any duplicates
     df.drop_duplicates(subset=[RawColumns.SYMBOL, RawColumns.DATE], inplace=True)
@@ -189,7 +195,6 @@ def generate_static_dataset(interval: Interval, spec: TripleBarrierSpec):
         return sym_df
 
     try:
-        [TripleBarrierSpec(H=5), TripleBarrierSpec(H=7)]
         df_labelled = (
             df.groupby(RawColumns.SYMBOL, as_index=False)
             .apply(process_symbol)
@@ -223,7 +228,7 @@ def test_silver_data(df: pd.DataFrame) -> bool:
             logger.error("RSI values out of bounds [0, 100].")
             return False
 
-    # assert
+    return True
 
 
 SUPPORTED_INTERVALS = ["day", "60minute", "30minute", "15minute", "5minute"]

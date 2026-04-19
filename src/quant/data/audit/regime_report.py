@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
 from quant.data._common import (
     AUDIT_DIR,
     CUTOFF_DATE,
@@ -107,14 +108,40 @@ def load_index_symbols(index: Indices) -> list[str]:
 
 
 def _slice_training(df: pd.DataFrame, date_col: str = RawColumns.DATE) -> pd.DataFrame:
-    """Return only rows in [CUTOFF_DATE, TRAIN_END_DATE)."""
+    """
+    Return only rows whose date falls within the training window [CUTOFF_DATE, TRAIN_END_DATE).
+
+    Arguments
+    ---------
+    df : pd.DataFrame
+        Silver DataFrame with a parseable date column.
+    date_col : str
+        Name of the date column to filter on.
+
+    Returns
+    -------
+    pd.DataFrame
+        Filtered copy containing only training-window rows.
+    """
     dates = pd.to_datetime(df[date_col])
     mask = (dates >= CUTOFF_DATE) & (dates < TRAIN_END_DATE)
     return df.loc[mask].copy()
 
 
 def _ensure_log_ret(df: pd.DataFrame) -> pd.DataFrame:
-    """Add ``log_ret`` column if missing."""
+    """
+    Add a ``log_ret`` column if one is not already present.
+
+    Arguments
+    ---------
+    df : pd.DataFrame
+        DataFrame with at least a ``close`` column (``RawColumns.CLOSE``).
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of *df* with ``log_ret = log(close / close.shift(1))`` appended.
+    """
     if "log_ret" not in df.columns:
         close = df[RawColumns.CLOSE].astype(float)
         df = df.copy()
@@ -185,6 +212,15 @@ class UniverseRegimeSummary:
     hurst_summary: dict[str, dict] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
+        """
+        Serialise the summary to a JSON-compatible dictionary.
+
+        Returns
+        -------
+        dict
+            Keys: ``index``, ``interval``, ``spec``, ``n_stocks_audited``,
+            ``n_stocks_in_index``, ``adf``, ``hurst``.
+        """
         return {
             "index": self.index,
             "interval": self.interval,
@@ -349,6 +385,24 @@ def _save_report(
     *,
     csv: bool = False,
 ) -> None:
+    """
+    Persist the regime report to JSON (and optionally CSV) under ``AUDIT_DIR/regime/``.
+
+    Arguments
+    ---------
+    summary : UniverseRegimeSummary
+        Aggregated summary object to serialise.
+    adf_df : pd.DataFrame
+        Per-stock ADF results (may be empty).
+    hurst_df : pd.DataFrame
+        Per-stock Hurst results (may be empty).
+    index : Indices
+        Index being reported, used in output filenames.
+    interval : Interval
+        Data interval, used in output filenames.
+    csv : bool
+        If ``True``, also write per-stock detail rows as CSV files.
+    """
     out_dir = AUDIT_DIR / "regime"
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -426,6 +480,7 @@ def print_summary(summary: UniverseRegimeSummary) -> None:
 
 
 def cli() -> None:
+    """CLI entry point: ``python -m quant.data.audit.regime_report --index <index> --interval <interval>``."""
     import argparse
 
     parser = argparse.ArgumentParser(

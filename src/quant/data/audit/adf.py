@@ -25,6 +25,14 @@ class ADFResult:
     stationary: bool  # True when p_value < alpha
 
     def to_dict(self) -> dict:
+        """
+        Serialise the result to a JSON-compatible dictionary.
+
+        Returns
+        -------
+        dict
+            Keys: ``feature``, ``symbol``, ``adf_stat``, ``p_value``, ``n_obs``, ``stationary``.
+        """
         return {
             "feature": self.feature,
             "symbol": self.symbol,
@@ -47,8 +55,26 @@ def run_adf(
     """
     Run an ADF test on *series* and return a structured result.
 
-    Returns ``None`` when the series has fewer than *min_obs* finite values
-    or is constant (zero variance).
+    Arguments
+    ---------
+    series : pd.Series
+        The time series to test for a unit root.
+    feature : str
+        Column name label included in the result (for reporting).
+    symbol : str
+        Ticker symbol label included in the result (for reporting).
+    alpha : float
+        Significance level; the series is considered stationary when p-value < alpha.
+    autolag : str
+        Lag selection criterion passed to :func:`statsmodels.tsa.stattools.adfuller`.
+    min_obs : int
+        Minimum number of finite observations required to run the test.
+
+    Returns
+    -------
+    ADFResult | None
+        Structured result, or ``None`` when the series has fewer than *min_obs* finite
+        values or is constant (zero variance).
     """
     clean = series.dropna()
     if len(clean) < min_obs:

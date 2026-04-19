@@ -1,7 +1,7 @@
+import asyncio
 import json
 import logging
 import os
-import time
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -29,13 +29,29 @@ class KiteDataHandler:
 
     def __init__(
         self,
-        api_key: str = None,
+        api_key: str | None = None,
         token_path: Path = Path("access_token.json"),
         inst_csv: Path = Path("data/historical/kite_nse_instruments.csv"),
         max_retries: int = 3,
         retry_delay: int = 1,
         data: pd.DataFrame | None = None,
     ):
+        """
+        Arguments
+        ---------
+        api_key : str | None
+            Zerodha API key. Falls back to ``ZERODHA_API_KEY`` env var if not provided.
+        token_path : Path
+            Path to the JSON file containing the access token.
+        inst_csv : Path
+            Path to the Kite NSE instruments CSV.
+        max_retries : int
+            Number of retry attempts per chunk on transient API errors.
+        retry_delay : int
+            Base delay in seconds for exponential-backoff retries.
+        data : pd.DataFrame | None
+            Pre-loaded DataFrame; populated by :meth:`fetch_historical` or :meth:`load`.
+        """
         try:
             self.kite = self._get_kite_session(api_key, token_path)
         except TokenException as exc:
@@ -88,7 +104,7 @@ class KiteDataHandler:
         return mapping
 
     async def fetch_historical(
-        self, symbols: list, interval: str = "day", start: date = None, end: date = None
+        self, symbols: list[str], interval: str = "day", start: date = None, end: date = None
     ) -> pd.DataFrame:
         """
         Fetch historical data for symbols between start and end using chunking.
@@ -144,7 +160,7 @@ class KiteDataHandler:
                     except Exception as e:
                         logger.warning(f"Attempt {i} failed: {e}")
                         if i < self.max_retries:
-                            time.sleep(self.retry_delay * 2 ** (i - 1))
+                            await asyncio.sleep(self.retry_delay * 2 ** (i - 1))
                 if not data:
                     logger.error(f"Failed to fetch {sym} chunk {chunk_start} to {chunk_end}")
                     chunk_start = chunk_end + timedelta(days=1)
@@ -174,6 +190,18 @@ class KiteDataHandler:
 
     @staticmethod
     def _generate_features(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute candlestick-derived features in-place: upper/lower shadows, tick body,
+        absolute diff, shifted close, percent change, and classification marker.
+        Arguments
+        ---------
+        df : pd.DataFrame
+            Raw OHLCV DataFrame with at least ``open``, ``high``, ``low``, ``close`` columns.
+        Returns
+        -------
+        pd.DataFrame
+            The same DataFrame with new feature columns appended.
+        """
         df["upper_shadow"] = df["high"] - df[["open", "close"]].max(axis=1)
         df["lower_shadow"] = df[["open", "close"]].min(axis=1) - df["low"]
         df["tick_body"] = (
@@ -185,7 +213,18 @@ class KiteDataHandler:
         df["classification_marker"] = df["percent_change"].astype(int)
         return df
 
-    def save(self, file_path: Path):
+    def save(self, file_path: Path) -> None:
+        """
+        Persist ``self.data`` to a dill pickle at ``file_path`` (suffix replaced with ``.pkl``).
+        Arguments
+        ---------
+        file_path : Path
+            Destination path; the ``.pkl`` suffix is enforced automatically.
+        Raises
+        ------
+        ValueError
+            If no data has been fetched or loaded yet.
+        """
         if self.data is None:
             raise ValueError("No data to save.")
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -196,9 +235,24 @@ class KiteDataHandler:
         logger.info(f"Saved data+metadata to {file_path.with_suffix('.pkl')}")
 
     @classmethod
-    def load(cls, file_path: Path):
-        with open(file_path.with_suffix(".pkl"), "rb") as f:
-            payload = dill.load(f)
+    def load(cls, file_path: Path) -> pd.DataFrame | None:
+        """
+        Load a previously saved dill pickle and return the stored DataFrame.
+        Arguments
+        ---------
+        file_path : Path
+            Path to the pickle file (suffix replaced with ``.pkl`` automatically).
+        Returns
+        -------
+        pd.DataFrame | None
+            The stored DataFrame, or ``None`` if the file does not exist.
+        """
+        try:
+            with open(file_path.with_suffix(".pkl"), "rb") as f:
+                payload = dill.load(f)
+        except FileNotFoundError:
+            logger.warning(f"Couldn't locate file {file_path}")
+            return None
         data = payload.get("data")
         logger.info(f"Loaded data+metadata from {file_path.with_suffix('.pkl')}")
         return data

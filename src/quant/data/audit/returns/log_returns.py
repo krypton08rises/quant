@@ -9,10 +9,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from scipy import stats
+
 from quant.data._common import AUDIT_DIR, RAW_DIR, FlagColumns, Interval, RawColumns
 from quant.data.kite.kite_handler import KiteDataHandler
 from quant.logs.logging import logger
-from scipy import stats
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -107,12 +108,40 @@ def compute_z_scores(log_ret: pd.Series) -> pd.Series:
 
 
 def mask_outlier_log_ret(df: pd.DataFrame, config: LogReturnsConfig) -> pd.Series:
-    """True where |log_ret| exceeds the configured threshold."""
+    """
+    Return a boolean mask where the absolute log return exceeds the configured threshold.
+
+    Arguments
+    ---------
+    df : pd.DataFrame
+        Must contain a ``log_ret`` column.
+    config : LogReturnsConfig
+        Uses ``outlier_log_return_threshold``.
+
+    Returns
+    -------
+    pd.Series
+        Boolean Series aligned to *df*'s index; ``True`` marks outlier rows.
+    """
     return df["log_ret"].abs() > config.outlier_log_return_threshold
 
 
 def mask_outlier_z_score(df: pd.DataFrame, config: LogReturnsConfig) -> pd.Series:
-    """True where |z_score| exceeds the configured threshold."""
+    """
+    Return a boolean mask where the absolute z-score exceeds the configured threshold.
+
+    Arguments
+    ---------
+    df : pd.DataFrame
+        Must contain a ``z_score`` column.
+    config : LogReturnsConfig
+        Uses ``outlier_z_score_threshold``.
+
+    Returns
+    -------
+    pd.Series
+        Boolean Series aligned to *df*'s index; ``True`` marks outlier rows.
+    """
     return df["z_score"].abs() > config.outlier_z_score_threshold
 
 
@@ -122,7 +151,22 @@ def build_outlier_types(
     volume_disparity_mask: pd.Series,
 ) -> pd.Series:
     """
-    Pipe-join active `OutlierType` labels per row (empty string if none).
+    Pipe-join active ``OutlierType`` labels per row into a single string column.
+
+    Arguments
+    ---------
+    log_ret_mask : pd.Series
+        Boolean mask for log-return outliers.
+    z_score_mask : pd.Series
+        Boolean mask for z-score outliers.
+    volume_disparity_mask : pd.Series
+        Boolean mask for volume-price disparity outliers.
+
+    Returns
+    -------
+    pd.Series
+        Object Series of pipe-separated label strings (e.g. ``"log_ret|z_score"``);
+        empty string where no flag is active.
     """
     a = log_ret_mask.fillna(False).to_numpy(dtype=bool)
     b = z_score_mask.fillna(False).to_numpy(dtype=bool)
@@ -312,34 +356,38 @@ def volume_price_disparity(
     min_periods: int | None = None,
 ) -> pd.Series:
     """
-    Compute the volatility-price disparity for a symbol.
-    if |logreturn| > .1 check if 20 day avg volume > today's volume
+    Compute the volume-price disparity flag for a symbol.
 
-    Returns a boolean mask indexed like `df` where the disparity condition holds.
-    Parameters
-    ----------
+    Flags rows where ``|log_ret| > logreturn_threshold`` and the trailing
+    ``volume_window``-bar average volume exceeds today's volume — i.e. a large
+    price move on abnormally low volume, suggesting a data artefact.
+
+    Arguments
+    ---------
     df : pd.DataFrame
-        The DataFrame containing the log returns and volume data.
+        Must contain ``logret_col`` and ``volume_col`` columns.
     symbol : str
-        The symbol of the stock.
+        Ticker symbol (used in error messages).
     logret_col : str
-        The column name of the log returns.
+        Column name for log returns.
     volume_col : RawColumns
-        The column name of the volume.
+        Column name for volume.
     logreturn_threshold : float
-        The threshold for the log returns.
+        Absolute log-return threshold above which volume is checked.
     volume_window : int
-        The window size for the average volume.
+        Rolling window size for the trailing average volume.
     min_periods : int | None
-        The minimum number of periods to compute the average volume.
+        Minimum observations for the rolling mean; defaults to ``volume_window``.
+
     Returns
     -------
     pd.Series
-        A boolean mask indexed like `df` where the disparity condition holds.
+        Boolean Series aligned to *df*'s original index; ``True`` marks disparity rows.
+
     Raises
     ------
     ValueError
-        If the input DataFrame does not contain the log returns or volume columns.
+        If *df* is missing ``logret_col`` or ``volume_col``.
     """
     if logret_col not in df.columns:
         raise ValueError(f"Input DataFrame must contain '{logret_col}' (computed log returns).")
@@ -373,13 +421,32 @@ def classify_outlier_regime(
     """
     Concatenate per-symbol audit frames and label each row with an ``OutlierRegime``.
 
-    A calendar bucket (normalized date) is **systematic** when the *share of symbols*
-    with at least one outlier that day exceeds ``systematic_threshold`` (e.g. 5%).
-    Outlier rows on those buckets are **systematic**; other outlier rows are
-    **idiosyncratic**. Non-outlier rows are **clean**.
+    A calendar bucket (normalised date) is **systematic** when the share of symbols with
+    at least one outlier that day exceeds ``systematic_threshold`` (e.g. 5 %). Outlier
+    rows on those buckets are labelled ``systematic``; other outlier rows are
+    ``idiosyncratic``. Non-outlier rows are ``clean``.
 
     Uses distinct symbols per day for both numerator and denominator (not raw row counts,
     which would mis-state intraday data).
+
+    Arguments
+    ---------
+    all_processed_dfs : list[pd.DataFrame]
+        Per-symbol DataFrames that each contain *date_col*, *symbol_col*, and *status_col*.
+    systematic_threshold : float
+        Fraction of active symbols that must have an outlier on a given day for that day
+        to be classified as systematic.
+    date_col : str
+        Name of the date column.
+    symbol_col : str
+        Name of the symbol column.
+    status_col : str
+        Name of the status column (values ``"Outlier"`` / ``"Clean"``).
+
+    Returns
+    -------
+    pd.DataFrame
+        Concatenated frame with an additional ``outlier_regime`` column.
     """
     if not all_processed_dfs:
         return pd.DataFrame()
@@ -415,7 +482,23 @@ def summarize_outlier_regime(
     master_df: pd.DataFrame,
     systematic_threshold: float,
 ) -> dict:
-    """Compact JSON-serializable summary for ``outlier_regime`` labels."""
+    """
+    Build a compact JSON-serialisable summary of ``outlier_regime`` labels.
+
+    Arguments
+    ---------
+    master_df : pd.DataFrame
+        Output of :func:`classify_outlier_regime`; must contain ``status`` and
+        ``outlier_regime`` columns (may be empty).
+    systematic_threshold : float
+        The threshold used during classification, echoed into the output for traceability.
+
+    Returns
+    -------
+    dict
+        Keys: ``systematic_threshold``, ``n_rows_total``, ``n_outlier_rows``,
+        ``outlier_rows_by_regime``, ``calendar_buckets_with_systematic_outliers``.
+    """
     if master_df.empty:
         return {
             "systematic_threshold": systematic_threshold,

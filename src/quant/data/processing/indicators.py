@@ -1,5 +1,3 @@
-from typing import Tuple
-
 import numpy as np
 import pandas as pd
 
@@ -57,7 +55,7 @@ def rsi_wilder(series: pd.Series, period: int = 14) -> pd.Series:
 
 def macd(
     series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9
-) -> Tuple[pd.Series, pd.Series, pd.Series]:
+) -> tuple[pd.Series, pd.Series, pd.Series]:
     """
     Compute the Moving Average Convergence Divergence (MACD) of a pandas Series.
     Formula:
@@ -88,7 +86,7 @@ def macd(
 
 def bollinger(
     series: pd.Series, window: int = 20, k: float = 2.0
-) -> Tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
+) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
     """
     Compute the Bollinger Bands for a pandas Series.
     Formula:
