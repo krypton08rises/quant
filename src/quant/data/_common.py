@@ -48,11 +48,30 @@ INTERVAL_LOOKBACK = {
 class Indices(Enum):
     """Supported NSE market indices."""
 
-    BANKNIFTY = "banknifty"
+    # Broad market
     NIFTY = "nifty_50"
-    MIDCAP150 = "midcap_150"
     NIFTYNEXT50 = "nifty_next_50"
+    NIFTY100 = "nifty_100"
+    NIFTY200 = "nifty_200"
+    NIFTY500 = "nifty_500"
+    MIDCAP150 = "midcap_150"
+    SMALLCAP100 = "smallcap_100"
+    SMALLCAP250 = "smallcap_250"
+    # Sectoral / thematic
+    BANKNIFTY = "banknifty"
+    NIFTYPRIVATEBANK = "nifty_private_bank"
+    NIFTYPSUBANK = "nifty_psu_bank"
     NIFTYFINSERV = "nifty_finserv"
+    NIFTYIT = "nifty_it"
+    NIFTYAUTO = "nifty_auto"
+    NIFTYPHARMA = "nifty_pharma"
+    NIFTYFMCG = "nifty_fmcg"
+    NIFTYMETAL = "nifty_metal"
+    NIFTYENERGY = "nifty_energy"
+    NIFTYREALTY = "nifty_realty"
+    NIFTYCONSUMPTION = "nifty_consumption"
+    NIFTYINFRA = "nifty_infra"
+    NIFTYMEDIA = "nifty_media"
 
 
 class Interval(Enum):

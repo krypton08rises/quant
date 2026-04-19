@@ -1,6 +1,7 @@
 data/audit/log_returns_stats.json
 data/audit/analysis/
 data/historical/
+data/historical_v1/
 data/indices/
 data/wastebin/
 models/wastebin/
