@@ -11,7 +11,6 @@ from quant.data._common import (
     CUTOFF_DATE,
     EMBARGOED_DATE_START,
     EntryPriceMode,
-    Indices,
     Interval,
     RawColumns,
     SilverColumns,
@@ -139,75 +138,106 @@ def label_at_t(df: pd.DataFrame, t: int, spec: TripleBarrierSpec) -> int | None:
     return 0  # neither barrier hit within H days
 
 
-def generate_static_dataset(interval: Interval, spec: TripleBarrierSpec) -> pd.DataFrame:
+PER_SYMBOL_SUBDIR = "_per_symbol"
+""" Subdirectory under ``<interval>__<config>/`` holding per-symbol labelled caches. """
+
+
+def _symbol_from_bronze_path(path: Path, interval: Interval) -> str:
+    """Derive the symbol name from a bronze filename like ``<SYMBOL>_<interval>.pkl``."""
+    suffix = f"_{interval.value}"
+    stem = path.stem
+    assert stem.endswith(suffix), f"Unexpected bronze filename: {path.name}"
+    return stem[: -len(suffix)]
+
+
+def build_symbol_silver(
+    bronze_path: Path,
+    interval: Interval,
+    spec: TripleBarrierSpec,
+    cache_dir: Path,
+    force: bool,
+) -> Path | None:
     """
-    Generates a static dataset for all stocks available in our file system.
-    Initially only for daily interval.
-    Arguments
-    ---------
-    interval : Interval
-        The data interval (e.g., daily, 60minute).
-    spec : TripleBarrierSpec
-        Triple barrier configuration (H, pt_k, sl_k, entry mode, tie-breaking rule).
-    Returns
-    -------
-    pd.DataFrame
-        The DataFrame containing the labelled data.
+    Build labelled silver data for a single (symbol, interval) pair and cache it.
+
+    Returns the path to the per-symbol parquet, or ``None`` if the bronze was
+    empty/unreadable. Existing caches are reused unless ``force=True``.
     """
     from quant.data.kite.kite_handler import KiteDataHandler
     from quant.data.processing.indicators import generate_indicators_from_df
 
-    master = []
-    for index in Indices:
-        # Load all data
-        data = KiteDataHandler.load(Path(f"{BRONZE_DIR}/{index.value}_{interval.value}.pkl"))
-        if data is None or data.empty:
-            logger.warning(f"Skipping {index}; Likely file not found!")
-            continue
-        master.append(data)
-    if not master:
-        return pd.DataFrame()
-    df = pd.concat(master, ignore_index=True)
-    # remove any duplicates
-    df.drop_duplicates(subset=[RawColumns.SYMBOL, RawColumns.DATE], inplace=True)
-    number_of_symbols = df[RawColumns.SYMBOL].nunique()
+    symbol = _symbol_from_bronze_path(bronze_path, interval)
+    out_path = cache_dir / f"{symbol}.parquet"
+    if out_path.exists() and not force:
+        logger.info("Cached silver exists for %s [%s]; skipping.", symbol, interval.value)
+        return out_path
+
+    data = KiteDataHandler.load(bronze_path)
+    if data is None or data.empty:
+        logger.warning("Skipping %s [%s]; bronze empty or missing.", symbol, interval.value)
+        return None
+
+    sym_df = data.sort_values(by=RawColumns.DATE).reset_index(drop=True)
+    if RawColumns.SYMBOL.value not in sym_df.columns:
+        sym_df[RawColumns.SYMBOL.value] = symbol
+
+    sym_df = generate_indicators_from_df(sym_df, tag=RawColumns.CLOSE)
+    assert SilverColumns.ATR in sym_df.columns, "ATR indicator must be computed before labelling."
+
+    label_col = f"label_{spec.H}"
+    labels = np.full(len(sym_df), np.nan, dtype=float)
+    end = max(len(sym_df) - spec.H - 1, 0)
+    for t in tqdm(range(end), desc=f"Labeling {symbol} [{interval.value}] H={spec.H}"):
+        lab = label_at_t(sym_df, t, spec)
+        if lab is not None:
+            labels[t] = lab
+    sym_df[label_col] = labels
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    sym_df.to_parquet(out_path)
+    logger.info("Wrote per-symbol silver for %s → %s", symbol, out_path)
+    return out_path
+
+
+def assemble_splits(cache_dir: Path, spec_dir: Path) -> None:
+    """
+    Concatenate every per-symbol silver parquet under ``cache_dir`` and write
+    train/test/embargoed splits to ``spec_dir``.
+    """
+    parts = sorted(cache_dir.glob("*.parquet"))
+    if not parts:
+        logger.warning("No per-symbol silver files in %s; skipping assembly.", cache_dir)
+        return
+
+    frames = []
+    for p in parts:
+        try:
+            frames.append(pd.read_parquet(p))
+        except Exception as e:
+            logger.error("Failed to read %s: %s", p, e)
+    if not frames:
+        return
+
+    df_static = pd.concat(frames, ignore_index=True)
+    df_static.drop_duplicates(subset=[RawColumns.SYMBOL.value, RawColumns.DATE.value], inplace=True)
+
+    date_col = RawColumns.DATE.value
+    train_df = df_static[df_static[date_col] <= CUTOFF_DATE]
+    test_df = df_static[
+        (df_static[date_col] > CUTOFF_DATE) & (df_static[date_col] < EMBARGOED_DATE_START)
+    ]
+    embargoed_df = df_static[df_static[date_col] >= EMBARGOED_DATE_START]
+
     logger.info(
-        f"Loaded bronze data for {number_of_symbols} unique symbols across indices at interval {interval.value}."
+        "Split sizes — train: %d, test: %d, embargoed: %d",
+        len(train_df),
+        len(test_df),
+        len(embargoed_df),
     )
-
-    # For each symbol, compute indicators and subsequently labelling
-    def process_symbol(sym_df: pd.DataFrame) -> pd.DataFrame:
-        symbol_val = sym_df.name if hasattr(sym_df, "name") else sym_df.index[0]
-        sym_df[RawColumns.SYMBOL.value] = symbol_val
-        # logger.info(f"Columns available for symbol : {sym_df.columns.tolist()}")
-        sym_df = sym_df.sort_values(by=RawColumns.DATE).reset_index(drop=True)
-        sym_df = generate_indicators_from_df(sym_df, tag=RawColumns.CLOSE)
-        assert (
-            SilverColumns.ATR in sym_df.columns
-        ), "ATR indicator must be computed before labelling."
-
-        for t in tqdm(
-            range(len(sym_df) - spec.H - 1),
-            desc=f"Labeling Symbol {sym_df[RawColumns.SYMBOL.value].iloc[0]} for H={spec.H}",
-        ):
-            label = label_at_t(sym_df, t, spec)
-            sym_df.loc[t, f"label_{spec.H}"] = label
-        return sym_df
-
-    try:
-        df_labelled = (
-            df.groupby(RawColumns.SYMBOL, as_index=False)
-            .apply(process_symbol)
-            .reset_index(drop=True)
-        )
-        assert (
-            RawColumns.SYMBOL.value in df_labelled.columns
-        ), "After labelling, SYMBOL column must exist."
-        # logger.info(f"Completed labelling for all symbols.")
-        return df_labelled
-    except Exception as e:
-        logger.error(f"Error during labelling: {e}")
-        raise e
+    for df, name in [(train_df, "train"), (test_df, "test"), (embargoed_df, "embargoed")]:
+        path = spec_dir / f"{name}.parquet"
+        df.to_parquet(path)
+        logger.info("Static labelled dataset saved to %s.", path)
 
 
 def test_silver_data(df: pd.DataFrame) -> bool:
@@ -234,38 +264,44 @@ def test_silver_data(df: pd.DataFrame) -> bool:
 SUPPORTED_INTERVALS = ["day", "60minute", "30minute", "15minute", "5minute"]
 
 
-def build_silver(interval: Interval) -> None:
+def build_silver(interval: Interval, force: bool = False) -> None:
     """
-    Generate and save the silver dataset for the given interval.
-    Splits:
+    Build the silver dataset for the given interval, one symbol at a time.
+
+    Per-symbol labelled parquets are cached under
+    ``<spec_dir>/_per_symbol/<SYMBOL>.parquet``. Cached symbol-interval pairs
+    are skipped unless ``force=True``. After all symbols are processed, the
+    caches are concatenated and split into train/test/embargoed parquets:
+
       train     — date <= CUTOFF_DATE
       test      — CUTOFF_DATE < date < EMBARGOED_DATE_START
       embargoed — date >= EMBARGOED_DATE_START
     """
     spec = TripleBarrierSpec(H=5)
-    df_static = generate_static_dataset(interval, spec)
-
     spec_dir = spec.silver_dir(interval)
-    spec_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir = spec_dir / PER_SYMBOL_SUBDIR
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
-    date_col = RawColumns.DATE.value
-    train_df = df_static[df_static[date_col] <= CUTOFF_DATE]
-    test_df = df_static[
-        (df_static[date_col] > CUTOFF_DATE) & (df_static[date_col] < EMBARGOED_DATE_START)
-    ]
-    embargoed_df = df_static[df_static[date_col] >= EMBARGOED_DATE_START]
+    bronze_paths = sorted(BRONZE_DIR.glob(f"*_{interval.value}.pkl"))
+    if not bronze_paths:
+        logger.warning("No bronze files for interval %s in %s.", interval.value, BRONZE_DIR)
+        return
 
     logger.info(
-        "Split sizes — train: %d, test: %d, embargoed: %d",
-        len(train_df),
-        len(test_df),
-        len(embargoed_df),
+        "Building silver for interval=%s across %d bronze files; force=%s.",
+        interval.value,
+        len(bronze_paths),
+        force,
     )
 
-    for df, name in [(train_df, "train"), (test_df, "test"), (embargoed_df, "embargoed")]:
-        path = spec_dir / f"{name}.parquet"
-        df.to_parquet(path)
-        logger.info("Static labelled dataset saved to %s.", path)
+    for bronze_path in bronze_paths:
+        try:
+            build_symbol_silver(bronze_path, interval, spec, cache_dir, force=force)
+        except Exception as e:
+            logger.error("Failed processing %s: %s", bronze_path.name, e, exc_info=True)
+            # Continue so a single bad symbol doesn't abort the whole run.
+
+    assemble_splits(cache_dir, spec_dir)
 
 
 def main() -> None:
@@ -276,11 +312,16 @@ def main() -> None:
         choices=SUPPORTED_INTERVALS + ["all"],
         help="Data interval to process, or 'all' for every supported interval.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Reprocess symbol-interval pairs even if a cached silver parquet exists.",
+    )
     args = parser.parse_args()
 
     intervals = SUPPORTED_INTERVALS if args.interval == "all" else [args.interval]
     for iv in intervals:
-        build_silver(Interval(iv))
+        build_silver(Interval(iv), force=args.force)
 
 
 if __name__ == "__main__":

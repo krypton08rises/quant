@@ -10,19 +10,23 @@ EMBARGOED_DATE_START = pd.Timestamp("2025-01-01", tz="UTC+05:30")
 TRAIN_END_DATE = pd.Timestamp("2024-01-01", tz="UTC+05:30")
 """ End of training window (exclusive). Matches val_start_dt in ml/config.py. """
 
-AUDIT_DIR = Path("data/audit/analysis/")
+# Anchor data paths to the package directory so cwd doesn't matter.
+# All historical data (raw/bronze/silver) + audit artifacts live under src/quant/data/.
+_DATA_ROOT = Path(__file__).resolve().parent
+
+AUDIT_DIR = _DATA_ROOT / "audit" / "analysis"
 os.makedirs(AUDIT_DIR, exist_ok=True)
 """ Directory for audit data (log returns, histograms, etc.)."""
 
-RAW_DIR = Path("data/historical/raw")
+RAW_DIR = _DATA_ROOT / "historical" / "raw"
 os.makedirs(RAW_DIR, exist_ok=True)
 """ Directory for raw historical data (raw OHLCV + candle features)."""
 
-BRONZE_DIR = Path("data/historical/bronze")
+BRONZE_DIR = _DATA_ROOT / "historical" / "bronze"
 os.makedirs(BRONZE_DIR, exist_ok=True)
 """ Directory for bronze historical data (raw OHLCV + audit flag columns)."""
 
-SILVER_DIR = Path("data/historical/silver")
+SILVER_DIR = _DATA_ROOT / "historical" / "silver"
 os.makedirs(SILVER_DIR, exist_ok=True)
 """ Directory for silver historical data (with technical indicators and labels)."""
 
