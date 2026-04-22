@@ -49,7 +49,7 @@ def run_adf(
     feature: str,
     symbol: str,
     alpha: float = 0.05,
-    autolag: str = "AIC",
+    autolag: str | None = "AIC",
     min_obs: int = 30,
 ) -> ADFResult | None:
     """
@@ -65,8 +65,11 @@ def run_adf(
         Ticker symbol label included in the result (for reporting).
     alpha : float
         Significance level; the series is considered stationary when p-value < alpha.
-    autolag : str
+    autolag : str or None
         Lag selection criterion passed to :func:`statsmodels.tsa.stattools.adfuller`.
+        Pass ``None`` to skip the lag search and use the Schwert-rule default
+        maxlag (``int(ceil(12 * (nobs/100)^0.25))``) — much faster and uses far
+        less memory at the cost of slightly noisier p-values.
     min_obs : int
         Minimum number of finite observations required to run the test.
 
@@ -82,7 +85,10 @@ def run_adf(
     if clean.nunique() == 1:
         return None
 
-    stat, p, _used_lag, nobs, _crit, _icbest = adfuller(clean.values, autolag=autolag)
+    result = adfuller(clean.values, autolag=autolag)
+    # statsmodels returns a 6-tuple when autolag is set (last element is icbest)
+    # and a 5-tuple when autolag is None.
+    stat, p, _used_lag, nobs = result[:4]
     return ADFResult(
         feature=feature,
         symbol=symbol,

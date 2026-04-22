@@ -17,6 +17,7 @@ Run:
 
 from __future__ import annotations
 
+import gc
 import json
 import logging
 from dataclasses import dataclass, field
@@ -27,8 +28,6 @@ import pandas as pd
 
 from quant.data._common import (
     AUDIT_DIR,
-    CUTOFF_DATE,
-    TRAIN_END_DATE,
     Indices,
     Interval,
     RawColumns,
@@ -81,6 +80,11 @@ class RegimeReportConfig:
     adf_min_obs: int = 30
     hurst_random_walk_lb: float = 0.45
     hurst_random_walk_ub: float = 0.55
+    # Skip adfuller's autolag search; use Schwert-rule maxlag instead. ~10-50x
+    # faster and far lighter on memory — preferred for universe-wide audits.
+    fast: bool = False
+    # How often to run gc.collect() during the per-symbol loop.
+    gc_every: int = 50
 
 
 # ---------------------------------------------------------------------------
@@ -105,27 +109,6 @@ def load_index_symbols(index: Indices) -> list[str]:
 # ---------------------------------------------------------------------------
 # Core audit logic
 # ---------------------------------------------------------------------------
-
-
-def _slice_training(df: pd.DataFrame, date_col: str = RawColumns.DATE) -> pd.DataFrame:
-    """
-    Return only rows whose date falls within the training window [CUTOFF_DATE, TRAIN_END_DATE).
-
-    Arguments
-    ---------
-    df : pd.DataFrame
-        Silver DataFrame with a parseable date column.
-    date_col : str
-        Name of the date column to filter on.
-
-    Returns
-    -------
-    pd.DataFrame
-        Filtered copy containing only training-window rows.
-    """
-    dates = pd.to_datetime(df[date_col])
-    mask = (dates >= CUTOFF_DATE) & (dates < TRAIN_END_DATE)
-    return df.loc[mask].copy()
 
 
 def _ensure_log_ret(df: pd.DataFrame) -> pd.DataFrame:
@@ -174,6 +157,7 @@ def audit_single_stock(
             feature=feat,
             symbol=symbol,
             alpha=config.adf_alpha,
+            autolag=None if config.fast else "AIC",
             min_obs=config.adf_min_obs,
         )
         if adf is not None:
@@ -315,9 +299,6 @@ def run_regime_report(
 
     logger.info("Loading silver training data from %s", train_path)
     df_all = pd.read_parquet(train_path)
-
-    # Slice to training window
-    df_all = _slice_training(df_all)
     df_all = _ensure_log_ret(df_all)
 
     # Filter to index constituents
@@ -342,7 +323,7 @@ def run_regime_report(
     all_adf: list[dict] = []
     all_hurst: list[dict] = []
 
-    for symbol in target_symbols:
+    for i, symbol in enumerate(target_symbols, start=1):
         sym_df = df_all[df_all[RawColumns.SYMBOL] == symbol].copy()
         if sym_df.empty:
             continue
@@ -351,6 +332,10 @@ def run_regime_report(
         adf_rows, hurst_rows = audit_single_stock(sym_df, symbol, ALL_AUDIT_FEATURES, config)
         all_adf.extend(adf_rows)
         all_hurst.extend(hurst_rows)
+
+        del sym_df
+        if config.gc_every and i % config.gc_every == 0:
+            gc.collect()
 
     adf_df = pd.DataFrame(all_adf) if all_adf else pd.DataFrame()
     hurst_df = pd.DataFrame(all_hurst) if all_hurst else pd.DataFrame()
@@ -512,11 +497,19 @@ def cli() -> None:
         default=False,
         help="Skip writing output files (print only).",
     )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        default=False,
+        help="Skip adfuller's AIC lag search; use Schwert-rule maxlag. "
+        "Much faster and lighter on memory for universe-wide audits.",
+    )
     args = parser.parse_args()
 
     summary = run_regime_report(
         index=Indices(args.index),
         interval=Interval(args.interval),
+        config=RegimeReportConfig(fast=args.fast),
         save=not args.no_save,
         csv=args.csv,
     )
